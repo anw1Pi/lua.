@@ -35846,6 +35846,65 @@ Escape Timer: %*]]
 					v26:Stop()
 				end,
 			}):AddKeyPicker("JerkOffK", { Text = "Jerk Off", Mode = "Toggle", NoUI = false, SyncToggleState = true })
+            local Players = game:GetService("Players")
+
+local playBangActive = false
+local bangAnimTrack = nil
+local bangAnimId = "rbxassetid://148840371" -- Bang из Infinite Yield
+local bangSpeed = 10-- 🔥 СКОРОСТЬ (1 = нормально, 0.3–0.5 медленно)
+
+-- ▶ запуск анимации
+local function startBang()
+	local plr = Players.LocalPlayer
+	local char = plr.Character or plr.CharacterAdded:Wait()
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = hum
+	end
+	local anim = Instance.new("Animation")
+	anim.AnimationId = bangAnimId
+	bangAnimTrack = animator:LoadAnimation(anim)
+	bangAnimTrack.Priority = Enum.AnimationPriority.Action
+	bangAnimTrack:Play()
+	bangAnimTrack:AdjustSpeed(bangSpeed) -- 🐢 замедление
+
+    -- Infinite Yield loop
+	task.spawn(function()
+		while playBangActive do
+			task.wait(0.1)
+			if bangAnimTrack and bangAnimTrack.IsPlaying then
+				bangAnimTrack.TimePosition = 0.1
+			end
+		end
+	end)
+end
+
+-- ⏹ остановка
+local function stopBang()
+	if bangAnimTrack then
+		bangAnimTrack:Stop()
+		bangAnimTrack = nil
+	end
+end
+
+-- 🔘 Toggle
+Character:AddToggle("BangToggle", {
+	Text = "Bang (Slow)",
+	Default = false,
+	Callback = function(on)
+		playBangActive = on
+		if on then
+			startBang()
+		else
+			stopBang()
+		end
+	end
+})
 
 			Character:AddDivider()
 
@@ -39046,9 +39105,177 @@ BuildGroup:AddToggle("HeartSparklerBuild", {
 	end
 })
 
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UIS = game:GetService("UserInputService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+-- IMAGE PRESETS
+local Images = {
+    ["Anime 1"] = "rbxassetid://128719984422016",
+    ["Anime 2"] = "rbxassetid://100799572605506",
+    ["Anime 3"] = "rbxassetid://127079251852438"
+}
+
+local SelectedImage = "Anime 1"
+local ImageHUD
+local ImageObject
+local Gradient
+
+-- CREATE HUD
+local function CreateImageHUD()
+
+    if ImageHUD then
+        ImageHUD:Destroy()
     end
 
-    
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "ObsidianImageHUD"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.Parent = PlayerGui
+
+    ImageHUD = ScreenGui
+
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.fromOffset(150, 150)
+    Frame.Position = UDim2.new(0.5, -75, 0.5, -75)
+    Frame.BackgroundTransparency = 1
+    Frame.Active = true
+    Frame.Parent = ScreenGui
+
+    Instance.new("UICorner", Frame).CornerRadius =
+        UDim.new(0, 15)
+
+    -- IMAGE
+    local Image = Instance.new("ImageLabel")
+    Image.Name = "AnimeImage"
+    Image.Size = UDim2.fromScale(1, 1)
+    Image.BackgroundTransparency = 1
+    Image.Image = Images[SelectedImage]
+    Image.ScaleType = Enum.ScaleType.Fit
+    Image.Parent = Frame
+
+    ImageObject = Image
+
+    Instance.new("UICorner", Image).CornerRadius =
+        UDim.new(0, 15)
+
+    -- BORDER
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Thickness = 2
+    Stroke.Transparency = 0.1
+    Stroke.Parent = Frame
+
+    Gradient = Instance.new("UIGradient")
+    Gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 190, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(150, 85, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(100, 190, 255))
+    })
+    Gradient.Parent = Stroke
+
+    -- DRAG
+    local Dragging = false
+    local DragStart
+    local StartPosition
+
+    Frame.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1
+        or Input.UserInputType == Enum.UserInputType.Touch then
+
+            Dragging = true
+            DragStart = Input.Position
+            StartPosition = Frame.Position
+
+            Input.Changed:Connect(function()
+                if Input.UserInputState == Enum.UserInputState.End then
+                    Dragging = false
+                end
+            end)
+        end
+    end)
+
+    local Connection
+    Connection = UIS.InputChanged:Connect(function(Input)
+        if not Frame.Parent then
+            Connection:Disconnect()
+            return
+        end
+
+        if Dragging and (
+            Input.UserInputType == Enum.UserInputType.MouseMovement
+            or Input.UserInputType == Enum.UserInputType.Touch
+        ) then
+
+            local Delta = Input.Position - DragStart
+
+            Frame.Position = UDim2.new(
+                StartPosition.X.Scale,
+                StartPosition.X.Offset + Delta.X,
+                StartPosition.Y.Scale,
+                StartPosition.Y.Offset + Delta.Y
+            )
+        end
+    end)
+
+    -- ANIMATION
+    task.spawn(function()
+        while ScreenGui.Parent and Gradient.Parent do
+            local Tween = TweenService:Create(
+                Gradient,
+                TweenInfo.new(4, Enum.EasingStyle.Linear),
+                {Rotation = Gradient.Rotation + 360}
+            )
+
+            Tween:Play()
+            Tween.Completed:Wait()
+        end
+    end)
+end
+
+-- IMAGE DROPDOWN
+BuildGroup:AddDropdown("AnimeImageDropdown", {
+    Text = "Select Image",
+    Values = {
+        "Anime 1",
+        "Anime 2",
+        "Anime 3"
+    },
+    Default = "Anime 1",
+
+    Callback = function(Value)
+        SelectedImage = Value
+
+        if ImageObject and ImageObject.Parent then
+            ImageObject.Image = Images[Value]
+        end
+    end
+})
+
+-- IMAGE TOGGLE
+BuildGroup:AddToggle("AnimeImageToggle", {
+    Text = "Anime Image",
+    Default = false,
+
+    Callback = function(Value)
+        if Value then
+            CreateImageHUD()
+        else
+            if ImageHUD then
+                ImageHUD:Destroy()
+                ImageHUD = nil
+                ImageObject = nil
+                Gradient = nil
+            end
+        end
+    end
+})
+
+    end
+
+
 	do
 		local Barrier = tbl15.Toys:AddRightGroupbox("Barrier", "circle-slash")
 		local flag12 = false
@@ -44580,6 +44807,278 @@ En12:AddDropdown("WatchlistDropdown", {
 
 	do
 		local Display = tbl15.Settings:AddLeftGroupbox("Display", "monitor")
+
+        Display:AddDivider("Coin Image")
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+
+local Player = Players.LocalPlayer
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+local AnimeImages = {
+    ["Anime 1"] = "rbxassetid://129349953972220",
+    ["Anime 2"] = "rbxassetid://132162919480648",
+    ["Anime 3"] = "rbxassetid://111758892993445"
+}
+
+local SelectedImage = "Anime 1"
+local Enabled = false
+
+local CoinsFrame
+local Background
+local Overlay
+local Stroke
+local Gradient
+local Coins
+local Connections = {}
+
+local function ClearConnections()
+    for _, connection in ipairs(Connections) do
+        connection:Disconnect()
+    end
+    table.clear(Connections)
+end
+
+local function CreateEffect()
+
+    local gui = PlayerGui:WaitForChild("MenuGui")
+    local TopRight = gui:WaitForChild("TopRight")
+
+    CoinsFrame = TopRight:WaitForChild("CoinsFrame")
+    local CoinsDisplay = CoinsFrame:WaitForChild("CoinsDisplay")
+
+    Coins = CoinsDisplay:WaitForChild("Coins")
+
+    -- CLEAN OLD ELEMENTS
+    for _, v in ipairs(CoinsFrame:GetChildren()) do
+        if v.Name == "AnimeBackground"
+        or v.Name == "DarkOverlay"
+        or v.Name == "AnimeStroke" then
+            v:Destroy()
+        end
+    end
+
+   -- FRAME
+   CoinsFrame.BackgroundColor3 = Color3.fromRGB(10, 12, 20)
+   CoinsFrame.BackgroundTransparency = 0.5
+   CoinsFrame.AutomaticSize = Enum.AutomaticSize.X
+   CoinsFrame.Size = UDim2.new(0, 0, 0, 90)
+   CoinsFrame.ClipsDescendants = true
+
+    local Corner = CoinsFrame:FindFirstChildOfClass("UICorner")
+    if not Corner then
+        Corner = Instance.new("UICorner")
+        Corner.Parent = CoinsFrame
+    end
+
+    Corner.CornerRadius = UDim.new(0, 15)
+
+    -- ANIME BACKGROUND
+Background = Instance.new("ImageLabel")
+Background.Name = "AnimeBackground"
+Background.BackgroundTransparency = 1
+Background.Size = UDim2.new(1.20, 0, 1.20, 0)
+Background.Position = UDim2.new(-0.125, 0, -0.125, 0)
+Background.ImageTransparency = 0.05
+Background.ScaleType = Enum.ScaleType.Crop
+Background.ZIndex = CoinsFrame.ZIndex
+Background.Parent = CoinsFrame
+
+    local BgCorner = Instance.new("UICorner")
+    BgCorner.CornerRadius = UDim.new(0, 15)
+    BgCorner.Parent = Background
+
+    -- DARK OVERLAY
+    Overlay = Instance.new("Frame")
+    Overlay.Name = "DarkOverlay"
+    Overlay.Size = UDim2.fromScale(1, 1)
+    Overlay.BackgroundColor3 = Color3.fromRGB(5, 8, 18)
+    Overlay.BackgroundTransparency = 0.70
+    Overlay.BorderSizePixel = 0
+    Overlay.ZIndex = CoinsFrame.ZIndex + 1
+    Overlay.Parent = CoinsFrame
+
+    local OverlayCorner = Instance.new("UICorner")
+    OverlayCorner.CornerRadius = UDim.new(0, 15)
+    OverlayCorner.Parent = Overlay
+
+    -- RAINBOW BORDER
+    Stroke = Instance.new("UIStroke")
+    Stroke.Name = "AnimeStroke"
+    Stroke.Thickness = 2
+    Stroke.Transparency = 0
+    Stroke.Parent = CoinsFrame
+
+    Gradient = Instance.new("UIGradient")
+    Gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+        ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 255, 0)),
+        ColorSequenceKeypoint.new(0.4, Color3.fromRGB(0, 255, 0)),
+        ColorSequenceKeypoint.new(0.6, Color3.fromRGB(0, 255, 255)),
+        ColorSequenceKeypoint.new(0.8, Color3.fromRGB(0, 0, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 255))
+    })
+    Gradient.Parent = Stroke
+
+    -- PADDING
+    local Padding = CoinsFrame:FindFirstChildOfClass("UIPadding")
+    if not Padding then
+        Padding = Instance.new("UIPadding")
+        Padding.Parent = CoinsFrame
+    end
+
+    Padding.PaddingLeft = UDim.new(0, 15)
+    Padding.PaddingRight = UDim.new(0, 15)
+
+    -- CONTENT (ICON REMOVED)
+    CoinsDisplay.BackgroundTransparency = 1
+    CoinsDisplay.AutomaticSize = Enum.AutomaticSize.X
+    CoinsDisplay.Size = UDim2.new(0, 0, 1, 0)
+    CoinsDisplay.ZIndex = CoinsFrame.ZIndex + 2
+
+    local Layout = CoinsDisplay:FindFirstChildOfClass("UIListLayout")
+
+    if not Layout then
+        Layout = Instance.new("UIListLayout")
+        Layout.Parent = CoinsDisplay
+    end
+
+    Layout.FillDirection = Enum.FillDirection.Horizontal
+    Layout.VerticalAlignment = Enum.VerticalAlignment.Center
+    Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    Layout.Padding = UDim.new(0, 0)
+
+    -- REMOVE COIN ICON
+    local CoinImage = CoinsDisplay:FindFirstChild("CoinImage")
+    if CoinImage then
+        CoinImage.Visible = false
+    end
+
+    -- COIN TEXT
+    Coins.LayoutOrder = 2
+    Coins.BackgroundTransparency = 1
+    Coins.AutomaticSize = Enum.AutomaticSize.X
+    Coins.TextXAlignment = Enum.TextXAlignment.Center
+    Coins.TextYAlignment = Enum.TextYAlignment.Center
+    Coins.Font = Enum.Font.GothamBold
+    Coins.TextSize = 15
+    Coins.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Coins.ZIndex = CoinsFrame.ZIndex + 3
+
+    -- RAINBOW TEXT OUTLINE
+    local TextStroke = Coins:FindFirstChildOfClass("UIStroke")
+
+    if not TextStroke then
+        TextStroke = Instance.new("UIStroke")
+        TextStroke.Parent = Coins
+    end
+
+    TextStroke.Thickness = 2
+    TextStroke.Transparency = 0
+    TextStroke.Color = Color3.fromRGB(255, 0, 0)
+
+    local TextGradient = Instance.new("UIGradient")
+    TextGradient.Name = "RainbowTextGradient"
+    TextGradient.Color = Gradient.Color
+    TextGradient.Parent = TextStroke
+
+    -- RAINBOW ANIMATION
+    task.spawn(function()
+        while Enabled and Gradient and Gradient.Parent do
+            local Tween = TweenService:Create(
+                Gradient,
+                TweenInfo.new(3, Enum.EasingStyle.Linear),
+                {Rotation = Gradient.Rotation + 360}
+            )
+            Tween:Play()
+            Tween.Completed:Wait()
+        end
+    end)
+
+    task.spawn(function()
+        while Enabled and TextGradient.Parent do
+            local Tween = TweenService:Create(
+                TextGradient,
+                TweenInfo.new(3, Enum.EasingStyle.Linear),
+                {Rotation = TextGradient.Rotation + 360}
+            )
+            Tween:Play()
+            Tween.Completed:Wait()
+        end
+    end)
+end
+
+local function RemoveEffect()
+    Enabled = false
+
+    ClearConnections()
+
+    if CoinsFrame then
+        for _, v in ipairs(CoinsFrame:GetChildren()) do
+            if v.Name == "AnimeBackground"
+            or v.Name == "DarkOverlay"
+            or v.Name == "AnimeStroke" then
+                v:Destroy()
+            end
+        end
+    end
+
+    if Coins then
+        local TextStroke = Coins:FindFirstChildOfClass("UIStroke")
+        if TextStroke then
+            local TextGradient = TextStroke:FindFirstChild("RainbowTextGradient")
+            if TextGradient then
+                TextGradient:Destroy()
+            end
+            TextStroke:Destroy()
+        end
+    end
+
+    local gui = PlayerGui:FindFirstChild("MenuGui")
+    if gui then
+        local frame = gui:FindFirstChild("TopRight")
+            and gui.TopRight:FindFirstChild("CoinsFrame")
+
+        if frame then
+            frame.BackgroundTransparency = 0
+        end
+    end
+end
+
+-- DROPDOWN
+Display:AddDropdown("AnimeBackgroundDropdown", {
+    Text = "Coın Background",
+    Values = {
+        "Anime 1",
+        "Anime 2",
+        "Anime 3"
+    },
+    Default = "Anime 1",
+
+    Callback = function(Value)
+        SelectedImage = Value
+
+        if Enabled and Background and Background.Parent then
+            Background.Image = AnimeImages[Value]
+        end
+    end
+})
+
+-- TOGGLE
+Display:AddToggle("AnimeCoinEffect", {
+    Text = "Anime Coin Design",
+    Default = false,
+
+    Callback = function(Value)
+        if Value then
+            Enabled = true
+            CreateEffect()
+        else
+            RemoveEffect()
+        end
+    end
+})
 
 		Display:AddDivider("Cursor")
 
