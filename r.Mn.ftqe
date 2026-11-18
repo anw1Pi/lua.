@@ -38655,7 +38655,6 @@ end)
 				"Remove Gucci",
 				"Remove Invisibility",
 				"Delete Seatables",
-                "Loop Snowball",
 			},
 			Multi = true,
 			AllowNull = true,
