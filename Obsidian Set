@@ -1,0 +1,2072 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+
+if getgenv and getgenv().__ObsidianPaint then
+	pcall(getgenv().__ObsidianPaint.Close)
+end
+
+local LibSrc = game:HttpGet(repo .. "Library.lua")
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local MAIN_TITLE = "Obsidian GUI"
+local PANEL_TITLE = "Builder Tab"
+local PANEL_TAB = "Builder"
+local FOOTER_MARK = "Builder UI"
+local CALLBACK = "function(Value) end"
+local ACCENT = Color3.fromRGB(125, 85, 255)
+
+local Spec = { Tabs = {} }
+local Sel = { tab = 1, host = 1 }
+local Selected = nil
+local Armed = nil
+local Counter = 0
+local Prefs = { NotifySide = "Right" }
+local Main = {}
+local Rebuilding, Closing = false, false
+local Guard = 0
+local Stripped = false
+local Widened = false
+local FooterAdjusted = false
+local ContentFrame = nil
+local UndoStack, RedoStack = {}, {}
+local lastSnap = {}
+local LibB, BO, BT, WinB
+local AO, AT
+local Conns = {}
+local DragGui
+local SelLabel, PreviewLabel
+local PropEntries = {}
+local commit, loadProps, scheduleCommit
+local closeAll
+
+local function q(s)
+	return string.format("%q", tostring(s))
+end
+
+local function nz(s)
+	if s == nil or s == "" then return nil end
+	return s
+end
+
+local function split(str)
+	local t = {}
+	for part in tostring(str or ""):gmatch("[^,]+") do
+		part = part:gsub("^%s+", ""):gsub("%s+$", "")
+		if part ~= "" then t[#t + 1] = part end
+	end
+	return t
+end
+
+local function splitAll(str)
+	local t = {}
+	for part in ((str or "") .. ","):gmatch("([^,]*),") do
+		part = part:gsub("^%s+", ""):gsub("%s+$", "")
+		t[#t + 1] = part
+	end
+	return t
+end
+
+local function sanitizeIdx(s, fallback)
+	s = tostring(s or ""):gsub("[^%w_]", "")
+	if s == "" then return fallback end
+	return s
+end
+
+local function rgbOf(s)
+	local p = split(s)
+	return tonumber(p[1]) or 255, tonumber(p[2]) or 255, tonumber(p[3]) or 255
+end
+
+local function numFromValue(v)
+	return tonumber(tostring(v):match("^(%d+)"))
+end
+
+local function deepCopy(t)
+	if type(t) ~= "table" then return t end
+	local n = {}
+	for k, v in pairs(t) do
+		if k ~= "live" and k ~= "_label" and k ~= "holders" then n[k] = deepCopy(v) end
+	end
+	return n
+end
+
+local function removeFrom(list, obj)
+	for i, v in ipairs(list) do
+		if v == obj then
+			table.remove(list, i)
+			return true
+		end
+	end
+	return false
+end
+
+local function indexOf(list, obj)
+	for i, v in ipairs(list) do
+		if v == obj then return i end
+	end
+	return nil
+end
+
+local function guarded(fn)
+	Guard = Guard + 1
+	pcall(fn)
+	Guard = Guard - 1
+end
+
+local function BNotify(title, desc)
+	pcall(function() LibB:Notify({ Title = title, Description = tostring(desc), Time = 3 }) end)
+end
+
+local function insetOf(obj)
+	local sg = obj and obj:FindFirstAncestorOfClass("ScreenGui")
+	if sg and sg.IgnoreGuiInset then return Vector2.new(0, 0) end
+	return GuiService:GetGuiInset()
+end
+
+local function rectOf(obj)
+	return obj.AbsolutePosition + insetOf(obj), obj.AbsoluteSize
+end
+
+local function inRect(obj, m)
+	local p, s = rectOf(obj)
+	return m.X >= p.X and m.X <= p.X + s.X and m.Y >= p.Y and m.Y <= p.Y + s.Y
+end
+
+local function isShown(obj)
+	local cur = obj
+	while cur and cur ~= game do
+		if cur:IsA("GuiObject") and not cur.Visible then return false end
+		if cur:IsA("ScreenGui") and not cur.Enabled then return false end
+		cur = cur.Parent
+	end
+	return obj.AbsoluteSize.X > 0 and obj.AbsoluteSize.Y > 0
+end
+
+local function safeParent(gui)
+	local ok = pcall(function() gui.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+	if not ok or not gui.Parent then gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end
+end
+
+local function unionRect(list)
+	local minX, minY, maxX, maxY
+	for _, h in ipairs(list or {}) do
+		if h.Parent and isShown(h) then
+			local p, s = rectOf(h)
+			minX = math.min(minX or p.X, p.X)
+			minY = math.min(minY or p.Y, p.Y)
+			maxX = math.max(maxX or (p.X + s.X), p.X + s.X)
+			maxY = math.max(maxY or (p.Y + s.Y), p.Y + s.Y)
+		end
+	end
+	if not minX then return nil end
+	return Vector2.new(minX, minY), Vector2.new(maxX - minX, maxY - minY)
+end
+
+local function drawRect(frame, pos, size, pad)
+	frame.Position = UDim2.fromOffset(pos.X - pad, pos.Y - pad)
+	frame.Size = UDim2.fromOffset(size.X + pad * 2, size.Y + pad * 2)
+	frame.Visible = true
+end
+
+local ICON_HELPERS = [[
+local function Snapshot(group)
+	local c = group.Container or group.Holder
+	local t = {}
+	if c then
+		for _, v in ipairs(c:GetChildren()) do t[v] = true end
+	end
+	return t
+end
+
+local function ApplyIcon(group, before, iconName)
+	pcall(function()
+		local c = group.Container or group.Holder
+		if not c then return end
+		for _, holder in ipairs(c:GetChildren()) do
+			if holder:IsA("GuiObject") and not before[holder] then
+				local lbl
+				for _, d in ipairs(holder:GetDescendants()) do
+					if d:IsA("TextLabel") and d.Text ~= "" then lbl = d break end
+				end
+				if not lbl then return end
+				local made = false
+				if Library.CreateIcon then
+					local ok, icon = pcall(function()
+						return Library:CreateIcon(iconName, {
+							Size = UDim2.fromOffset(16, 16),
+							AnchorPoint = Vector2.new(0, 0.5),
+							Position = UDim2.new(lbl.Position.X.Scale, lbl.Position.X.Offset, 0.5, 0),
+							BackgroundTransparency = 1,
+							ZIndex = lbl.ZIndex,
+							Parent = lbl.Parent,
+						})
+					end)
+					made = ok and icon ~= nil
+				end
+				if not made and Library.GetIcon then
+					local icon = Library:GetIcon(iconName)
+					if icon then
+						local img = Instance.new("ImageLabel")
+						img.BackgroundTransparency = 1
+						img.Size = UDim2.fromOffset(16, 16)
+						img.AnchorPoint = Vector2.new(0, 0.5)
+						img.Position = UDim2.new(lbl.Position.X.Scale, lbl.Position.X.Offset, 0.5, 0)
+						img.Image = icon.Url
+						img.ImageRectOffset = icon.ImageRectOffset
+						img.ImageRectSize = icon.ImageRectSize
+						img.ZIndex = lbl.ZIndex
+						img.Parent = lbl.Parent
+						made = true
+					end
+				end
+				if made then
+					lbl.Position = lbl.Position + UDim2.fromOffset(20, 0)
+					lbl.Size = lbl.Size - UDim2.fromOffset(20, 0)
+				end
+				return
+			end
+		end
+	end)
+end
+]]
+
+local function T(fields, depth)
+	depth = depth or 1
+	local ind = ("\t"):rep(depth)
+	local lines = {}
+	for _, f in ipairs(fields) do
+		if f[2] ~= nil then lines[#lines + 1] = ind .. f[1] .. " = " .. f[2] .. "," end
+	end
+	return "{\n" .. table.concat(lines, "\n") .. "\n" .. ("\t"):rep(depth - 1) .. "}"
+end
+
+local function addonColor(idx, title, e)
+	local r, g, b = rgbOf(e.colorDefault)
+	return ("AddColorPicker(%s, %s)"):format(q(idx), T({
+		{ "Default", ("Color3.fromRGB(%d, %d, %d)"):format(r, g, b) },
+		{ "Title", q(title) },
+		{ "Callback", CALLBACK },
+	}, 2))
+end
+
+local function addonKey(idx, title, e)
+	return ("AddKeyPicker(%s, %s)"):format(q(idx), T({
+		{ "Default", q(nz(e.keyDefault) or "X") },
+		{ "Mode", q(nz(e.keyMode) or "Toggle") },
+		{ "Text", q(title) },
+		{ "NoUI", "false" },
+		{ "Callback", CALLBACK },
+	}, 2))
+end
+
+local function dropdownValues(e)
+	local out, first, set = {}, nil, {}
+	for _, v in ipairs(split(e.values)) do
+		local title = v:match("^%-%-%-(.*)$")
+		if title then
+			out[#out + 1] = ("Library:DropdownDivider(%s)"):format(q(title))
+		else
+			out[#out + 1] = q(v)
+			first = first or v
+			set[v] = true
+		end
+	end
+	if #out == 0 then
+		out = { q("Option1"), q("Option2") }
+		first = "Option1"
+		set["Option1"] = true
+	end
+	local def = (nz(e.default) and set[e.default]) and e.default or first
+	return out, def
+end
+
+local SETTINGS_OK = { Toggle = true, Checkbox = true, Slider = true, Input = true, Dropdown = true }
+
+local function baseElement(var, e)
+	local t, idx = e.type, sanitizeIdx(e.idx, "El")
+	local text = (e.text and e.text ~= "") and e.text or t
+	local tip = nz(e.tooltip) and q(e.tooltip) or nil
+	local risky = e.risky and "true" or nil
+	local dis = e.disabled and "true" or nil
+	local s
+
+	if t == "Divider" then
+		s = nz(e.text) and ("%s:AddDivider(%s)"):format(var, q(e.text)) or (var .. ":AddDivider()")
+
+	elseif t == "Label" then
+		local wrap = not (e.addColor or e.addKey)
+		s = ("%s:AddLabel(%s%s)"):format(var, q(text), wrap and ", true" or "")
+
+	elseif t == "Toggle" or t == "Checkbox" then
+		s = ("%s:Add%s(%s, %s)"):format(var, t, q(idx), T({
+			{ "Text", q(text) }, { "Tooltip", tip },
+			{ "Default", e.default == "true" and "true" or "false" },
+			{ "Risky", risky }, { "Disabled", dis }, { "Callback", CALLBACK },
+		}))
+
+	elseif t == "Button" then
+		s = ("%s:AddButton(%s)"):format(var, T({
+			{ "Text", q(text) },
+			{ "Func", "function() end" },
+			{ "Tooltip", tip }, { "Risky", risky }, { "Disabled", dis },
+		}))
+		if nz(e.subText) then
+			s = s .. ("\n\t:AddButton({ Text = %s, Func = function() end })"):format(q(e.subText))
+		end
+
+	elseif t == "Slider" then
+		local mn, mx = tonumber(e.min) or 0, tonumber(e.max) or 100
+		s = ("%s:AddSlider(%s, %s)"):format(var, q(idx), T({
+			{ "Text", q(text) }, { "Default", tostring(tonumber(e.default) or mn) },
+			{ "Min", tostring(mn) }, { "Max", tostring(mx) },
+			{ "Rounding", tostring(tonumber(e.rounding) or 0) },
+			{ "Suffix", nz(e.suffix) and q(e.suffix) or nil },
+			{ "Compact", e.compact and "true" or nil },
+			{ "Tooltip", tip }, { "Disabled", dis }, { "Callback", CALLBACK },
+		}))
+
+	elseif t == "Input" then
+		s = ("%s:AddInput(%s, %s)"):format(var, q(idx), T({
+			{ "Text", q(text) }, { "Default", q(e.default or "") },
+			{ "Placeholder", nz(e.placeholder) and q(e.placeholder) or nil },
+			{ "Numeric", e.numeric and "true" or nil },
+			{ "Finished", e.finished and "true" or nil },
+			{ "Tooltip", tip }, { "Callback", CALLBACK },
+		}))
+
+	elseif t == "Dropdown" then
+		local vals, def = dropdownValues(e)
+		s = ("%s:AddDropdown(%s, %s)"):format(var, q(idx), T({
+			{ "Text", q(text) },
+			{ "Values", "{ " .. table.concat(vals, ", ") .. " }" },
+			{ "Default", q(def) },
+			{ "Multi", e.multi and "true" or "false" },
+			{ "Searchable", e.searchable and "true" or "false" },
+			{ "AutoWidth", e.autoWidth and "true" or nil },
+			{ "Tooltip", tip }, { "Disabled", dis }, { "Callback", CALLBACK },
+		}))
+
+	elseif t == "ColorPicker" then
+		s = ("%s:AddLabel(%s)\n\t:%s"):format(var, q(text), addonColor(idx, text, e))
+
+	elseif t == "KeyPicker" then
+		s = ("%s:AddLabel(%s)\n\t:%s"):format(var, q(text), addonKey(idx, text, e))
+
+	elseif t == "Image" then
+		s = ("%s:AddImage(%s, %s)"):format(var, q(idx), T({
+			{ "Image", q(e.image or "") },
+			{ "Height", tostring(tonumber(e.height) or 150) },
+		}))
+
+	elseif t == "Viewport" then
+		local obj = nz(e.objectPath)
+		local objExpr = obj or '(function() local p = Instance.new("Part") p.Size = Vector3.new(4, 4, 4) p.Anchored = true return p end)()'
+		s = ("%s:AddViewport(%s, %s)"):format(var, q(idx), T({
+			{ "Object", objExpr },
+			{ "Clone", obj and "true" or nil },
+			{ "Interactive", e.interactive and "true" or "false" },
+			{ "AutoFocus", "true" },
+			{ "Height", tostring(tonumber(e.height) or 150) },
+		}))
+
+	else
+		return "local _ = nil"
+	end
+
+	if t == "Toggle" or t == "Checkbox" or t == "Label" then
+		if e.addColor then s = s .. "\n\t:" .. addonColor(idx .. "_Color", text, e) end
+		if e.addKey then s = s .. "\n\t:" .. addonKey(idx .. "_Key", text, e) end
+	end
+	return s
+end
+
+local function elementCode(var, e, sv)
+	local code = baseElement(var, e)
+	if nz(e.icon) and e.type ~= "Image" and e.type ~= "Viewport" then
+		code = ("do\n\tlocal before = Snapshot(%s)\n%s\n\tApplyIcon(%s, before, %s)\nend")
+			:format(var, code, var, q(e.icon))
+	end
+	local hasSv = false
+	if e.settings and e.sset and SETTINGS_OK[e.type] then
+		local reg = (e.type == "Toggle" or e.type == "Checkbox") and "Toggles" or "Options"
+		code = code .. ("\nlocal %s = %s[%s]:AddSettings({ Width = %d })")
+			:format(sv, reg, q(sanitizeIdx(e.idx, "El")), tonumber(e.gearWidth) or 220)
+		hasSv = true
+	end
+	return code, hasSv
+end
+
+local function lineAddTab(tab, tv)
+	local name, icon, desc = tab.Name, nz(tab.Icon), nz(tab.Desc)
+	if tab.form == "table" then
+		return ("local %s = Window:AddTab(%s)"):format(tv, T({
+			{ "Name", q(name) },
+			{ "Icon", icon and q(icon) or nil },
+			{ "Description", desc and q(desc) or nil },
+			{ "SubTabs", tab.SubTabs and "true" or nil },
+		}))
+	end
+	local args = { q(name), icon and q(icon) or "nil", desc and q(desc) or "nil" }
+	if tab.SubTabs then args[4] = "true" end
+	while #args > 1 and args[#args] == "nil" do args[#args] = nil end
+	return ("local %s = Window:AddTab(%s)"):format(tv, table.concat(args, ", "))
+end
+
+local function lineSubTab(tv, hv, host)
+	if nz(host.Icon) then
+		return ("local %s = %s:AddSubTab(%s, %s)"):format(hv, tv, q(host.Name or "SubTab"), q(host.Icon))
+	end
+	return ("local %s = %s:AddSubTab(%s)"):format(hv, tv, q(host.Name or "SubTab"))
+end
+
+local function maxHeightLine(v, mh)
+	local n = tonumber(mh)
+	if n and n > 0 then
+		return ("\nif %s.SetMaxHeight then %s:SetMaxHeight(%d) end"):format(v, v, n)
+	end
+	return ""
+end
+
+local function lineGroupbox(pv, v, c)
+	local mh = tonumber(c.MaxHeight)
+	return ("local %s = %s:AddGroupbox(%s)"):format(v, pv, T({
+		{ "Side", q(c.Side) },
+		{ "Name", q(c.Name) },
+		{ "Description", nz(c.Desc) and q(c.Desc) or nil },
+		{ "IconName", nz(c.Icon) and q(c.Icon) or nil },
+		{ "MaxHeight", (mh and mh > 0) and tostring(mh) or nil },
+		{ "Collapsed", c.Collapsed and "true" or nil },
+		{ "DisableCollapsing", c.DisableCollapsing and "true" or nil },
+	}))
+end
+
+local function lineTabbox(pv, v, c)
+	return ("local %s = %s:Add%sTabbox()"):format(v, pv, c.Side) .. maxHeightLine(v, c.MaxHeight)
+end
+
+local function lineTabboxTab(bv, v, t)
+	local icon = nz(t.Icon) and (", " .. q(t.Icon)) or ""
+	return ("local %s = %s:AddTab(%s%s)"):format(v, bv, q(t.Name), icon) .. maxHeightLine(v, t.MaxHeight)
+end
+
+local function childSlots(e)
+	local list = {}
+	if e.settings and e.sset then list[#list + 1] = e.sset end
+	if e.type == "Tabbox" and e.Tabs then
+		for _, t in ipairs(e.Tabs) do list[#list + 1] = t end
+	end
+	return list
+end
+
+local function contSlots(c)
+	local list = {}
+	if not c then return list end
+	local function addChildren(slot, label)
+		for _, e in ipairs(slot.Elements) do
+			for _, cs in ipairs(childSlots(e)) do
+				if e.type == "Tabbox" then
+					cs._label = label .. " > Tab: " .. tostring(cs.Name)
+				else
+					cs._label = label .. " > Gear: " .. (e.text ~= "" and e.text or e.idx)
+				end
+				list[#list + 1] = cs
+				addChildren(cs, cs._label)
+			end
+		end
+	end
+	if c.Kind == "Groupbox" then
+		c._label = "Groupbox: " .. c.Name
+		list[1] = c
+		addChildren(c, c._label)
+	else
+		for _, t in ipairs(c.Tabs) do
+			t._label = "Tab: " .. t.Name
+			list[#list + 1] = t
+			addChildren(t, t._label)
+		end
+	end
+	return list
+end
+
+local function genElements(var, elements, w)
+	for i, e in ipairs(elements) do
+		local sv = ("%s_%d"):format(var, i)
+		if e.type == "Tabbox" then
+			w(("local %s = %s:AddTabbox()"):format(sv, var))
+			for ti, t in ipairs(e.Tabs or {}) do
+				local tv = ("%s_%d"):format(sv, ti)
+				w(lineTabboxTab(sv, tv, t))
+				genElements(tv, t.Elements, w)
+			end
+		else
+			local code, hasSv = elementCode(var, e, sv)
+			w(code)
+			if hasSv then genElements(sv, e.sset.Elements, w) end
+		end
+	end
+end
+
+local function genContainer(hv, cv, c, w)
+	w("")
+	if c.Kind == "Groupbox" then
+		w(lineGroupbox(hv, cv, c))
+		genElements(cv, c.Elements, w)
+	else
+		w(lineTabbox(hv, cv, c))
+		for ti, t in ipairs(c.Tabs) do
+			local tv = ("%s_%d"):format(cv, ti)
+			w(lineTabboxTab(cv, tv, t))
+			genElements(tv, t.Elements, w)
+		end
+	end
+end
+
+local function walkTab(tab, fn)
+	for _, h in ipairs(tab.Hosts) do
+		for _, c in ipairs(h.Containers) do
+			for _, s in ipairs(contSlots(c)) do
+				for _, e in ipairs(s.Elements) do fn(e) end
+			end
+		end
+	end
+end
+
+local function generate(only, header)
+	local out = {}
+	local function w(s) out[#out + 1] = s end
+	local picked = {}
+	for i, t in ipairs(Spec.Tabs) do
+		if not only or only == i then picked[#picked + 1] = { i, t } end
+	end
+
+	if header then
+		w('local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"')
+		w('local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()')
+		w("local Options = Library.Options")
+		w("local Toggles = Library.Toggles")
+		w("")
+		w('local Window = Library:CreateWindow({ Title = "Window", Footer = "Generated", Center = true, AutoShow = true })')
+		w("")
+	end
+
+	local needIcons = false
+	for _, it in ipairs(picked) do
+		walkTab(it[2], function(e) if nz(e.icon) then needIcons = true end end)
+	end
+	if needIcons then w(ICON_HELPERS) end
+
+	for _, it in ipairs(picked) do
+		local ti, tab = it[1], it[2]
+		local tv = "Tab" .. ti
+		w(lineAddTab(tab, tv))
+		for hi, host in ipairs(tab.Hosts) do
+			local hv = tv
+			if tab.SubTabs then
+				hv = ("%sS%d"):format(tv, hi)
+				w(lineSubTab(tv, hv, host))
+			end
+			for ci, c in ipairs(host.Containers) do
+				genContainer(hv, ("%sC%d"):format(hv, ci), c, w)
+			end
+		end
+		w("")
+	end
+	return table.concat(out, "\n")
+end
+
+local function containerOf(live)
+	return live and (live.Container or live.Holder)
+end
+
+local function exec(code, vars)
+	vars = vars or {}
+	vars.Library = Main.Lib
+	vars.Options = Main.Lib.Options
+	vars.Toggles = Main.Lib.Toggles
+	vars.Window = Main.Win
+	local names, vals = {}, {}
+	for k, v in pairs(vars) do
+		names[#names + 1] = k
+		vals[#vals + 1] = v
+	end
+	local src = "local " .. table.concat(names, ", ") .. " = ...\n"
+		.. (code:find("Snapshot%(") and ICON_HELPERS or "") .. code
+	local fn, err = loadstring(src)
+	if not fn then return false, err end
+	return pcall(fn, table.unpack(vals, 1, #names))
+end
+
+local liveAddElement
+local liveBuildTabboxTab
+
+local function liveBuildElements(slot)
+	for _, e in ipairs(slot.Elements) do
+		liveAddElement(slot, e)
+	end
+end
+
+liveAddElement = function(slot, e)
+	if not slot.live then return false end
+	local cont = containerOf(slot.live)
+	local before = {}
+	if cont then
+		for _, v in ipairs(cont:GetChildren()) do before[v] = true end
+	end
+	local function collect()
+		e.holders = {}
+		if cont then
+			for _, v in ipairs(cont:GetChildren()) do
+				if not before[v] and v:IsA("GuiObject") then e.holders[#e.holders + 1] = v end
+			end
+		end
+	end
+
+	if e.type == "Tabbox" then
+		local ok, res = exec("return Group:AddTabbox()", { Group = slot.live })
+		if not ok or not res then
+			BNotify("Tabbox error", res)
+			return false
+		end
+		e.live = res
+		collect()
+		for _, t in ipairs(e.Tabs or {}) do liveBuildTabboxTab(e, t) end
+		return true
+	end
+
+	local code, hasSv = elementCode("Group", e, "Sv")
+	if hasSv then code = code .. "\nreturn Sv" end
+	local ok, res = exec(code, { Group = slot.live })
+	if not ok then
+		BNotify("Element error (" .. e.type .. ")", res)
+		return false
+	end
+	collect()
+	if hasSv then
+		e.sset.live = res
+		if res then liveBuildElements(e.sset) end
+	end
+	return true
+end
+
+liveBuildTabboxTab = function(c, t)
+	local ok, res = exec(lineTabboxTab("Box", "Tb", t) .. "\nreturn Tb", { Box = c.live })
+	if not ok or not res then
+		BNotify("Tabbox tab error", res)
+		return false
+	end
+	t.live = res
+	liveBuildElements(t)
+	return true
+end
+
+local function liveBuildContainer(host, c)
+	if not host.live then return false end
+	if c.Kind == "Groupbox" then
+		local ok, res = exec(lineGroupbox("Host", "G", c) .. "\nreturn G", { Host = host.live })
+		if not ok or not res then
+			BNotify("Groupbox error", res)
+			return false
+		end
+		c.live = res
+		liveBuildElements(c)
+	else
+		local ok, res = exec(lineTabbox("Host", "B", c) .. "\nreturn B", { Host = host.live })
+		if not ok or not res then
+			BNotify("Tabbox error", res)
+			return false
+		end
+		c.live = res
+		for _, t in ipairs(c.Tabs) do liveBuildTabboxTab(c, t) end
+	end
+	return true
+end
+
+local function tryTab(tab)
+	local forms = tab.form and { tab.form } or (tab.SubTabs and { "table", "pos" } or { "pos" })
+	for _, f in ipairs(forms) do
+		tab.form = f
+		local ok, res = exec(lineAddTab(tab, "Tab") .. "\nreturn Tab", {})
+		if ok and res and (not tab.SubTabs or (type(res) == "table" and res.AddSubTab)) then
+			tab.live = res
+			return true
+		end
+		tab.live = nil
+	end
+	tab.form = nil
+	return false
+end
+
+local function buildSpecTabs()
+	for _, tab in ipairs(Spec.Tabs) do
+		if not tryTab(tab) then
+			BNotify("Tab error", tab.Name .. " could not be created")
+		else
+			for _, host in ipairs(tab.Hosts) do
+				if tab.SubTabs then
+					local ok, res = exec(lineSubTab("Tab", "Sub", host) .. "\nreturn Sub", { Tab = tab.live })
+					host.live = ok and res or nil
+					if not ok then BNotify("SubTab error", res) end
+				else
+					host.live = tab.live
+				end
+				if host.live then
+					for _, c in ipairs(host.Containers) do liveBuildContainer(host, c) end
+				end
+			end
+		end
+	end
+end
+
+local function copyList()
+	local list = { "(All)" }
+	for i, t in ipairs(Spec.Tabs) do list[#list + 1] = ("%d  %s"):format(i, t.Name) end
+	return list
+end
+
+local function refreshCopyList()
+	if Main.Lib and AO and AO.CopyTab then
+		pcall(function()
+			local cur = AO.CopyTab.Value
+			local list = copyList()
+			AO.CopyTab:SetValues(list)
+			local keep = list[1]
+			for _, v in ipairs(list) do if v == cur then keep = v end end
+			AO.CopyTab:SetValue(keep)
+		end)
+	end
+end
+
+local function createMain()
+	local Lib = loadstring(LibSrc)()
+	Main.Lib = Lib
+	AO, AT = Lib.Options, Lib.Toggles
+
+	local vp = workspace.CurrentCamera.ViewportSize
+	local WA, WB, H = 560, 500, 470
+	local x0 = math.max(8, (vp.X - (WA + WB + 12)) / 2)
+	local y0 = math.max(8, (vp.Y - H) / 2)
+
+	local Win = Lib:CreateWindow({
+		Title = MAIN_TITLE, Footer = "Your GUI", NotifySide = Prefs.NotifySide,
+		Position = UDim2.fromOffset(x0, y0), Size = UDim2.fromOffset(WA, H),
+		Center = false, AutoShow = true, ShowCustomCursor = true,
+	})
+	Main.Win = Win
+	Lib:OnUnload(function()
+		if not Rebuilding then closeAll() end
+	end)
+
+	buildSpecTabs()
+
+	local TSet = Win:AddTab("Settings", "settings")
+	local TCopy = Win:AddTab("Copy", "copy")
+
+	local CG = TCopy:AddGroupbox({ Side = "Left", Name = "Copy", IconName = "copy" })
+	CG:AddDropdown("CopyTab", { Text = "Select tab", Values = copyList(), Default = 1 })
+	CG:AddToggle("CopyHeader", { Text = "Include Library and Window header", Default = false })
+	CG:AddButton({
+		Text = "Copy",
+		Func = function()
+			if #Spec.Tabs == 0 then
+				return Lib:Notify({ Title = "Copy", Description = "No tabs yet", Time = 3 })
+			end
+			local code = generate(numFromValue(AO.CopyTab.Value), AT.CopyHeader.Value)
+			local clip = setclipboard or toclipboard or (syn and syn.write_clipboard)
+			if clip then
+				clip(code)
+				Lib:Notify({ Title = "Copied", Description = "Script copied to clipboard", Time = 3 })
+			else
+				Lib:Notify({ Title = "Error", Description = "Clipboard is not supported", Time = 4 })
+			end
+		end,
+	})
+	CG:AddButton({
+		Text = "Show Preview",
+		Func = function()
+			local code = generate(numFromValue(AO.CopyTab.Value), AT.CopyHeader.Value)
+			code = code:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+			pcall(function() PreviewLabel:SetText(code) end)
+		end,
+	})
+	CG:AddDivider()
+	PreviewLabel = CG:AddLabel(" ", true)
+
+	local MG = TSet:AddGroupbox({ Side = "Left", Name = "Menu", IconName = "wrench" })
+	MG:AddDropdown("NotifySide", {
+		Text = "Notification side",
+		Values = { "Left", "Right", "TopLeft", "TopRight", "BottomLeft", "BottomRight" },
+		Default = Prefs.NotifySide,
+		Callback = function(v)
+			Prefs.NotifySide = v
+			pcall(function() Lib:SetNotifySide(v) end)
+			pcall(function() LibB:SetNotifySide(v) end)
+		end,
+	})
+	MG:AddDropdown("DPIDropdown", {
+		Text = "DPI Scale",
+		Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
+		Default = "100%",
+		Callback = function(v) Lib:SetDPIScale(tonumber((v:gsub("%%", "")))) end,
+	})
+	MG:AddToggle("ShowCustomCursor", {
+		Text = "Custom Cursor", Default = Lib.ShowCustomCursor,
+		Callback = function(v) Lib.ShowCustomCursor = v end,
+	})
+	MG:AddDivider()
+	MG:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
+	MG:AddButton({ Text = "Close All", Func = function() closeAll() end, Risky = true, DoubleClick = true })
+	Lib.ToggleKeybind = AO.MenuKeybind
+
+	ThemeManager:SetLibrary(Lib)
+	SaveManager:SetLibrary(Lib)
+	SaveManager:IgnoreThemeSettings()
+	SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+	ThemeManager:SetFolder("ObsidianPaint")
+	SaveManager:SetFolder("ObsidianPaint/configs")
+	SaveManager:BuildConfigSection(TSet)
+	ThemeManager:ApplyToTab(TSet)
+end
+
+local function rebuild()
+	Rebuilding = true
+	if Main.Lib then pcall(function() Main.Lib:Unload() end) end
+	Main.Lib = nil
+	local ok, err = pcall(createMain)
+	Rebuilding = false
+	if not ok then BNotify("Main GUI error", err) end
+end
+
+closeAll = function()
+	if Closing then return end
+	Closing = true
+	for _, c in ipairs(Conns) do pcall(function() c:Disconnect() end) end
+	if DragGui then pcall(function() DragGui:Destroy() end) end
+	if Main.Lib then pcall(function() Main.Lib:Unload() end) end
+	pcall(function() LibB:Unload() end)
+	if getgenv then getgenv().__ObsidianPaint = nil end
+end
+
+local function curTab() return Spec.Tabs[Sel.tab] end
+
+local function curHost()
+	local t = curTab()
+	return t and t.Hosts[Sel.host]
+end
+
+local function clampSel()
+	Sel.tab = math.clamp(Sel.tab, 1, math.max(#Spec.Tabs, 1))
+	local t = curTab()
+	Sel.host = math.clamp(Sel.host, 1, math.max(t and #t.Hosts or 0, 1))
+end
+
+local function eachSlot(fn)
+	for ti, tab in ipairs(Spec.Tabs) do
+		for hi, host in ipairs(tab.Hosts) do
+			for _, c in ipairs(host.Containers) do
+				for _, s in ipairs(contSlots(c)) do
+					if fn(s, c, host, tab, ti, hi) then return end
+				end
+			end
+		end
+	end
+end
+
+local function findHostOf(container)
+	for _, tab in ipairs(Spec.Tabs) do
+		for _, host in ipairs(tab.Hosts) do
+			for _, c in ipairs(host.Containers) do
+				if c == container then return host, tab end
+			end
+		end
+	end
+end
+
+local function inMain(obj)
+	local mf = Main.Lib and Main.Lib.MainFrame
+	if not mf then return true end
+	local p, sz = rectOf(obj)
+	local mp, ms = rectOf(mf)
+	local cx, cy = p.X + sz.X / 2, p.Y + sz.Y / 2
+	return cx >= mp.X and cx <= mp.X + ms.X and cy >= mp.Y and cy <= mp.Y + ms.Y
+end
+
+local function hostShown(h)
+	local hc = containerOf(h.live)
+	if hc and hc.Parent and isShown(hc) and inMain(hc) then return true end
+	for _, c in ipairs(h.Containers) do
+		local cc = containerOf(c.live)
+		if cc and cc.Parent and isShown(cc) and inMain(cc) then return true end
+	end
+	return false
+end
+
+local function visibleHost(m)
+	local lib = Main.Lib
+	local act = lib and lib.ActiveTab
+	local tab
+	if act then
+		for _, t in ipairs(Spec.Tabs) do
+			if t.live == act then
+				tab = t
+				break
+			end
+		end
+	end
+	tab = tab or curTab()
+	if not tab then return nil, nil end
+	local host
+	if tab.SubTabs then
+		for _, h in ipairs(tab.Hosts) do
+			if hostShown(h) then
+				host = h
+				break
+			end
+		end
+		if not host and tab == curTab() then host = curHost() end
+		if not host then host = tab.Hosts[1] end
+	else
+		host = tab.Hosts[1]
+	end
+	Sel.tab = indexOf(Spec.Tabs, tab) or Sel.tab
+	if host then Sel.host = indexOf(tab.Hosts, host) or Sel.host end
+	return tab, host
+end
+
+local function slotRegion(slot)
+	local cont = containerOf(slot.live)
+	if not cont or not cont.Parent or not isShown(cont) then return nil end
+	local p, s = rectOf(cont)
+	return p.X - 8, p.Y - 34, s.X + 16, s.Y + 44
+end
+
+local function slotAt(m, onlyGroupbox)
+	local best, area
+	eachSlot(function(s, c)
+		if onlyGroupbox and s ~= c then return end
+		local x, y, w, h = slotRegion(s)
+		if x and m.X >= x and m.X <= x + w and m.Y >= y and m.Y <= y + h then
+			local a = w * h
+			if not area or a < area then best, area = s, a end
+		end
+	end)
+	return best
+end
+
+local function insertPoint(slot, my)
+	local idx = 1
+	for i, e in ipairs(slot.Elements) do
+		local p, s = unionRect(e.holders)
+		if p then
+			if my > p.Y + s.Y * 0.5 then idx = i + 1 end
+		else
+			idx = i + 1
+		end
+	end
+	local cont = containerOf(slot.live)
+	local cp, cs = rectOf(cont)
+	local y = cp.Y
+	local prev = slot.Elements[idx - 1]
+	local pp, ps = unionRect(prev and prev.holders)
+	if pp then y = pp.Y + ps.Y end
+	return idx, y, cp.X, cs.X
+end
+
+local function slotInside(e, slot)
+	for _, cs in ipairs(childSlots(e)) do
+		if cs == slot then return true end
+		for _, x in ipairs(cs.Elements) do
+			if slotInside(x, slot) then return true end
+		end
+	end
+	return false
+end
+
+local function elementAt(m)
+	local found, slot, area
+	eachSlot(function(s)
+		for _, e in ipairs(s.Elements) do
+			local p, sz = unionRect(e.holders)
+			if p and m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y then
+				local a = sz.X * sz.Y
+				if not area or a < area then found, slot, area = e, s, a end
+			end
+		end
+	end)
+	return found, slot
+end
+
+local function F(key, label, kind, default, extra)
+	local f = { key = key, label = label, kind = kind or "input", default = default }
+	if extra then for k, v in pairs(extra) do f[k] = v end end
+	return f
+end
+
+local ELEM_FIELDS = {
+	F("idx", "Index (Options/Toggles name)", nil, ""),
+	F("text", "Text / Name (title for Divider)", nil, ""),
+	F("icon", "Icon (lucide)", nil, ""),
+	F("tooltip", "Tooltip", nil, ""),
+	F("default", "Default", nil, ""),
+	F("min", "Slider Min", nil, "0"),
+	F("max", "Slider Max", nil, "100"),
+	F("rounding", "Slider Rounding", nil, "0"),
+	F("suffix", "Slider Suffix", nil, ""),
+	F("values", "Dropdown values (comma separated, ---Title = divider)", nil, ""),
+	F("placeholder", "Input Placeholder", nil, ""),
+	F("subText", "Sub button text", nil, ""),
+	F("colorDefault", "Color (255,0,0)", nil, "125,85,255"),
+	F("keyDefault", "Key (X, MB2, ...)", nil, "X"),
+	F("keyMode", "KeyPicker Mode", "drop", "Toggle", { values = { "Toggle", "Hold", "Always", "Press" } }),
+	F("height", "Height (Image / Viewport)", nil, "150"),
+	F("image", "Image (rbxassetid://...)", nil, ""),
+	F("objectPath", "Viewport object (workspace.Part)", nil, ""),
+	F("gearWidth", "Gear panel width", nil, "220"),
+	F("tabNames", "Tabbox tab names (comma separated)", nil, "Tab 1, Tab 2"),
+	F("tabIcons", "Tabbox tab icons (comma separated, lucide)", nil, ""),
+	F("multi", "Dropdown: Multi", "toggle", false),
+	F("searchable", "Dropdown: Searchable", "toggle", false),
+	F("autoWidth", "Dropdown: AutoWidth", "toggle", false),
+	F("risky", "Risky (red)", "toggle", false),
+	F("disabled", "Disabled", "toggle", false),
+	F("numeric", "Input: Numeric", "toggle", false),
+	F("finished", "Input: Finished", "toggle", false),
+	F("compact", "Slider: Compact", "toggle", false),
+	F("interactive", "Viewport: Interactive", "toggle", false),
+	F("addColor", "Add ColorPicker addon", "toggle", false),
+	F("addKey", "Add KeyPicker addon", "toggle", false),
+	F("settings", "Add gear (AddSettings) panel", "toggle", false),
+}
+
+local TOGGLE_LIKE = { "idx", "text", "icon", "tooltip", "default", "risky", "disabled", "addColor", "addKey", "colorDefault", "keyDefault", "keyMode", "settings", "gearWidth" }
+local VIS = {
+	Divider = { "text", "icon" },
+	Label = { "idx", "text", "icon", "addColor", "addKey", "colorDefault", "keyDefault", "keyMode" },
+	Toggle = TOGGLE_LIKE,
+	Checkbox = TOGGLE_LIKE,
+	Button = { "text", "icon", "tooltip", "subText", "risky", "disabled" },
+	Slider = { "idx", "text", "icon", "tooltip", "default", "min", "max", "rounding", "suffix", "compact", "disabled", "settings", "gearWidth" },
+	Input = { "idx", "text", "icon", "tooltip", "default", "placeholder", "numeric", "finished", "settings", "gearWidth" },
+	Dropdown = { "idx", "text", "icon", "tooltip", "default", "values", "multi", "searchable", "autoWidth", "disabled", "settings", "gearWidth" },
+	ColorPicker = { "idx", "text", "icon", "colorDefault" },
+	KeyPicker = { "idx", "text", "icon", "keyDefault", "keyMode" },
+	Image = { "idx", "image", "height" },
+	Viewport = { "idx", "height", "objectPath", "interactive" },
+	Tabbox = { "tabNames", "tabIcons" },
+}
+
+local TEMPLATES = {
+	Divider = { text = "" },
+	Label = { text = "Label" },
+	Toggle = { text = "Toggle", default = "false" },
+	Checkbox = { text = "Checkbox", default = "false" },
+	Button = { text = "Button" },
+	Slider = { text = "Slider", default = "50" },
+	Input = { text = "Input" },
+	Dropdown = { text = "Dropdown", values = "One, ---Group, Two, Three", default = "One" },
+	ColorPicker = { text = "Color" },
+	KeyPicker = { text = "Keybind" },
+	Image = {},
+	Viewport = {},
+}
+
+local SIDES = { "Left", "Right" }
+local GROUP_FIELDS = {
+	F("Name", "Groupbox name", nil, "Groupbox"),
+	F("Desc", "Description", nil, ""),
+	F("Icon", "Icon (IconName)", nil, ""),
+	F("Side", "Side", "drop", "Left", { values = SIDES }),
+	F("MaxHeight", "MaxHeight (empty = unlimited)", nil, ""),
+	F("Collapsed", "Collapsed (start closed)", "toggle", false),
+	F("DisableCollapsing", "DisableCollapsing", "toggle", false),
+}
+local TABBOX_PROP = {
+	F("Side", "Tabbox side", "drop", "Right", { values = SIDES }),
+	F("MaxHeight", "Tabbox MaxHeight", nil, ""),
+}
+local TABBOX_CARD = {
+	F("Side", "Tabbox side", "drop", "Right", { values = SIDES }),
+	F("MaxHeight", "Tabbox MaxHeight", nil, ""),
+	F("TabName", "First tab name", nil, "Tab 1"),
+	F("TabIcon", "First tab icon", nil, ""),
+}
+local TBTAB_FIELDS = {
+	F("Name", "Tabbox tab name", nil, "Tab"),
+	F("Icon", "Tabbox tab icon", nil, ""),
+	F("MaxHeight", "Tabbox tab MaxHeight", nil, ""),
+}
+local TAB_FIELDS = {
+	F("Name", "Tab name", nil, "New Tab"),
+	F("Desc", "Tab description", nil, ""),
+	F("Icon", "Tab icon (lucide)", nil, "box"),
+}
+local TAB_CARD = {
+	F("Name", "Tab name", nil, "New Tab"),
+	F("Desc", "Tab description", nil, ""),
+	F("Icon", "Tab icon (lucide)", nil, "box"),
+	F("SubTabs", "Tab with SubTabs", "toggle", false),
+}
+local SUB_CARD = {
+	F("Name", "SubTab name", nil, "SubTab"),
+	F("Icon", "SubTab icon", nil, ""),
+}
+
+local function elemCardFields(kind)
+	local want = {}
+	for _, k in ipairs(VIS[kind] or {}) do want[k] = true end
+	want.idx, want.gearWidth = nil, nil
+	local out = {}
+	for _, f in ipairs(ELEM_FIELDS) do
+		if want[f.key] then
+			local ff = {}
+			for k, v in pairs(f) do ff[k] = v end
+			local t = TEMPLATES[kind] and TEMPLATES[kind][f.key]
+			if t ~= nil then ff.default = t end
+			out[#out + 1] = ff
+		end
+	end
+	return out
+end
+
+local ELEMENT_TYPES = { "Divider", "Label", "Toggle", "Checkbox", "Button", "Slider", "Input", "Dropdown", "ColorPicker", "KeyPicker", "Image", "Viewport" }
+local IS_ELEMENT = {}
+for _, k in ipairs(ELEMENT_TYPES) do IS_ELEMENT[k] = true end
+
+local CARDS = {
+	{ kind = "Tab", title = "ADD TAB", fields = TAB_CARD },
+	{ kind = "SubTab", title = "ADD SUBTAB", fields = SUB_CARD },
+	{ kind = "Groupbox", title = "ADD GROUPBOX", fields = GROUP_FIELDS },
+	{ kind = "Tabbox", title = "ADD TABBOX", fields = TABBOX_CARD },
+}
+for _, k in ipairs(ELEMENT_TYPES) do
+	CARDS[#CARDS + 1] = { kind = k, title = "ADD " .. k:upper(), fields = elemCardFields(k) }
+end
+local CARD_BY_KIND = {}
+for _, c in ipairs(CARDS) do CARD_BY_KIND[c.kind] = c end
+
+LibB = loadstring(LibSrc)()
+BO, BT = LibB.Options, LibB.Toggles
+if getgenv then getgenv().__ObsidianPaint = { Close = function() closeAll() end } end
+
+do
+	local vp = workspace.CurrentCamera.ViewportSize
+	local WA, WB, H = 560, 500, 470
+	local x0 = math.max(8, (vp.X - (WA + WB + 12)) / 2)
+	local y0 = math.max(8, (vp.Y - H) / 2)
+	WinB = LibB:CreateWindow({
+		Title = PANEL_TITLE, Footer = FOOTER_MARK, NotifySide = Prefs.NotifySide,
+		Position = UDim2.fromOffset(x0 + WA + 12, y0), Size = UDim2.fromOffset(WB, H),
+		Center = false, AutoShow = true, ShowCustomCursor = false, DisableSearch = true,
+	})
+	LibB:OnUnload(function() closeAll() end)
+end
+
+local PMain = WinB:AddTab(PANEL_TAB, "hammer")
+
+local function getCtl(prefix, f)
+	return (f.kind == "toggle" and BT or BO)[prefix .. f.key]
+end
+
+local function buildFields(group, prefix, fields)
+	for _, f in ipairs(fields) do
+		local name = prefix .. f.key
+		if f.kind == "toggle" then
+			group:AddToggle(name, { Text = f.label, Default = f.default == true })
+		elseif f.kind == "drop" then
+			group:AddDropdown(name, { Text = f.label, Values = f.values, Default = f.default or f.values[1] })
+		else
+			group:AddInput(name, { Text = f.label, Default = tostring(f.default or ""), Finished = false })
+		end
+	end
+end
+
+local function readFields(prefix, fields)
+	local t = {}
+	for _, f in ipairs(fields) do t[f.key] = getCtl(prefix, f).Value end
+	return t
+end
+
+local function writeFields(prefix, fields, obj)
+	guarded(function()
+		for _, f in ipairs(fields) do
+			pcall(function()
+				local v = obj[f.key]
+				local c = getCtl(prefix, f)
+				if f.kind == "toggle" then
+					c:SetValue(v == true)
+				else
+					if v == nil then v = f.default or (f.values and f.values[1]) or "" end
+					c:SetValue(tostring(v))
+				end
+			end)
+		end
+	end)
+end
+
+local function setVis(prefix, fields, which)
+	for _, f in ipairs(fields) do
+		local c = getCtl(prefix, f)
+		local show = (which == true) or (type(which) == "table" and which[f.key] == true)
+		pcall(function() c:SetVisible(show) end)
+	end
+end
+
+local HeaderCache = {}
+local RootCache = {}
+
+local function findRoot(title)
+	local c = RootCache[title]
+	if c and c.Parent then return c end
+	local places = { game:GetService("CoreGui"), Players.LocalPlayer:FindFirstChildOfClass("PlayerGui") }
+	pcall(function() if gethui then table.insert(places, gethui()) end end)
+	for _, place in ipairs(places) do
+		if place then
+			for _, gui in ipairs(place:GetChildren()) do
+				if gui:IsA("ScreenGui") and gui ~= DragGui then
+					for _, d in ipairs(gui:GetDescendants()) do
+						if d:IsA("TextLabel") and d.Text == title then
+							RootCache[title] = gui
+							return gui
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local function rootOf(lib, title)
+	if lib and lib.ScreenGui and lib.ScreenGui.Parent then return lib.ScreenGui end
+	return findRoot(title)
+end
+
+local function overWindow(lib, title, m)
+	local root = rootOf(lib, title)
+	if not root then return false end
+	local vp = workspace.CurrentCamera.ViewportSize
+	for _, ch in ipairs(root:GetChildren()) do
+		if ch:IsA("GuiObject") and ch.Visible then
+			local s = ch.AbsoluteSize
+			if s.X > 200 and s.Y > 150 and s.X < vp.X * 0.9 and inRect(ch, m) then return true end
+		end
+	end
+	return false
+end
+
+local function headerLabel(title)
+	local cached = HeaderCache[title]
+	if cached and cached.l and cached.l.Parent then return cached.l end
+	if cached and not cached.l and os.clock() - cached.t < 2 then return nil end
+	local root = rootOf(LibB, PANEL_TITLE)
+	local found
+	if root then
+		for _, d in ipairs(root:GetDescendants()) do
+			if d:IsA("TextLabel") and d.Text == title then
+				found = d
+				break
+			end
+		end
+	end
+	HeaderCache[title] = { l = found, t = os.clock() }
+	return found
+end
+
+local function cardAt(m)
+	for _, card in ipairs(CARDS) do
+		local l = headerLabel(card.title)
+		if l and isShown(l) then
+			local p, s = rectOf(l)
+			local x1, x2 = p.X, p.X + s.X
+			local par = l.Parent
+			if par and par:IsA("GuiObject") then
+				local pp, ps = rectOf(par)
+				x1, x2 = pp.X, pp.X + ps.X
+			end
+			if m.X >= x1 and m.X <= x2 and m.Y >= p.Y - 6 and m.Y <= p.Y + s.Y + 6 then return card end
+		end
+	end
+end
+
+local function syncTabs(e)
+	local names, icons = split(e.tabNames), splitAll(e.tabIcons)
+	if #names == 0 then names = { "Tab 1" } end
+	e.Tabs = e.Tabs or {}
+	for i, n in ipairs(names) do
+		local t = e.Tabs[i]
+		if not t then
+			t = { Elements = {} }
+			e.Tabs[i] = t
+		end
+		t.Name = n
+		t.Icon = icons[i] or ""
+		t.MaxHeight = ""
+	end
+	for i = #e.Tabs, #names + 1, -1 do table.remove(e.Tabs, i) end
+end
+
+local function newElement(kind)
+	Counter = Counter + 1
+	local e = { type = kind }
+	for _, f in ipairs(ELEM_FIELDS) do e[f.key] = f.default end
+	for k, v in pairs(TEMPLATES[kind] or {}) do e[k] = v end
+	local card = CARD_BY_KIND[kind]
+	if card then
+		for k, v in pairs(readFields("D_" .. kind .. "_", card.fields)) do e[k] = v end
+	end
+	e.idx = ("El%d"):format(Counter)
+	return e
+end
+
+local function selectElementObj(e, slot)
+	local container
+	eachSlot(function(s, c)
+		if s == slot then
+			container = c
+			return true
+		end
+	end)
+	Selected = { kind = "element", obj = e, slot = slot, container = container }
+end
+
+local function addElementAt(slot, e, idx)
+	idx = math.clamp(idx or (#slot.Elements + 1), 1, #slot.Elements + 1)
+	table.insert(slot.Elements, idx, e)
+	selectElementObj(e, slot)
+	commit(false)
+	loadProps()
+end
+
+local function addTabFromDefaults()
+	local d = readFields("D_Tab_", TAB_CARD)
+	local tab = {
+		Name = nz(d.Name) or ("Tab " .. (#Spec.Tabs + 1)),
+		Desc = d.Desc, Icon = d.Icon,
+		SubTabs = d.SubTabs == true, Hosts = {},
+	}
+	if not tab.SubTabs then tab.Hosts[1] = { Containers = {} } end
+	table.insert(Spec.Tabs, tab)
+	Sel.tab, Sel.host = #Spec.Tabs, 1
+	Selected = { kind = "tab", obj = tab }
+	commit(true)
+end
+
+local function addSubTabFromDefaults(m)
+	local tab = visibleHost(m)
+	if not tab then return BNotify("Error", "Add a tab first") end
+	local d = readFields("D_SubTab_", SUB_CARD)
+	if not tab.SubTabs then
+		tab.SubTabs = true
+		tab.form = nil
+		for i, h in ipairs(tab.Hosts) do
+			h.Name = h.Name or (i == 1 and "Main" or ("SubTab " .. i))
+		end
+	end
+	local host = { Name = nz(d.Name) or ("SubTab " .. (#tab.Hosts + 1)), Icon = d.Icon, Containers = {} }
+	table.insert(tab.Hosts, host)
+	Sel.tab = indexOf(Spec.Tabs, tab) or Sel.tab
+	Sel.host = #tab.Hosts
+	Selected = { kind = "host", obj = host, tab = tab }
+	commit(true)
+end
+
+local function sideFor(m, fallback)
+	local minX, maxX
+	eachSlot(function(s)
+		local cont = containerOf(s.live)
+		if cont and cont.Parent and isShown(cont) then
+			local p, sz = rectOf(cont)
+			minX = math.min(minX or p.X, p.X)
+			maxX = math.max(maxX or (p.X + sz.X), p.X + sz.X)
+		end
+	end)
+	if minX and maxX and maxX - minX > 50 then
+		return m.X > (minX + maxX) / 2 and "Right" or "Left"
+	end
+	return fallback
+end
+
+local function addGroupboxFromDefaults(m)
+	local _, host = visibleHost(m)
+	if not host then return BNotify("Error", "Add a tab or subtab first") end
+	local d = readFields("D_Groupbox_", GROUP_FIELDS)
+	local c = {
+		Kind = "Groupbox", Name = nz(d.Name) or "Groupbox", Desc = d.Desc, Icon = d.Icon,
+		Side = sideFor(m, d.Side), MaxHeight = d.MaxHeight,
+		Collapsed = d.Collapsed, DisableCollapsing = d.DisableCollapsing, Elements = {},
+	}
+	table.insert(host.Containers, c)
+	Selected = { kind = "groupbox", obj = c, container = c, slot = c }
+	commit(true)
+end
+
+local function addTabboxToHost(m)
+	local _, host = visibleHost(m)
+	if not host then return BNotify("Error", "Add a tab or subtab first") end
+	local d = readFields("D_Tabbox_", TABBOX_CARD)
+	local first = { Name = nz(d.TabName) or "Tab 1", Icon = d.TabIcon, MaxHeight = "", Elements = {} }
+	local c = {
+		Kind = "Tabbox", Side = sideFor(m, d.Side), MaxHeight = d.MaxHeight, Tabs = { first },
+	}
+	table.insert(host.Containers, c)
+	Selected = { kind = "tabboxslot", obj = first, container = c, slot = first }
+	commit(true)
+end
+
+local function addNestedTabbox(slot, idx)
+	local d = readFields("D_Tabbox_", TABBOX_CARD)
+	Counter = Counter + 1
+	local e = {
+		type = "Tabbox", idx = ("El%d"):format(Counter),
+		tabNames = (nz(d.TabName) or "Tab 1") .. ", Tab 2",
+		tabIcons = nz(d.TabIcon) or "",
+	}
+	syncTabs(e)
+	addElementAt(slot, e, idx)
+end
+
+local function groupboxAt(m)
+	local found
+	eachSlot(function(s, c)
+		if s == c and s.Kind == "Groupbox" then
+			local x, y, w, h = slotRegion(s)
+			if x and m.X >= x and m.X <= x + w and m.Y >= y and m.Y <= y + h then
+				found = s
+			end
+		end
+	end)
+	return found
+end
+
+local function placeKind(kind, m, target)
+	if kind == "Tab" then
+		if not overWindow(Main.Lib, MAIN_TITLE, m) then return end
+		return addTabFromDefaults()
+	end
+	if kind == "SubTab" then
+		if not overWindow(Main.Lib, MAIN_TITLE, m) then return end
+		return addSubTabFromDefaults(m)
+	end
+	if kind == "Groupbox" then
+		if not overWindow(Main.Lib, MAIN_TITLE, m) then return end
+		return addGroupboxFromDefaults(m)
+	end
+	if kind == "Tabbox" then
+		local gb = (target and target.slot and target.slot.Kind == "Groupbox") and target.slot or groupboxAt(m)
+		if gb then
+			return addNestedTabbox(gb, target and target.idx or nil)
+		end
+		if not overWindow(Main.Lib, MAIN_TITLE, m) then return end
+		return addTabboxToHost(m)
+	end
+	local slot = (target and target.slot) or slotAt(m)
+	if not slot then return BNotify("Error", "Drop inside a groupbox") end
+	local idx = (target and target.idx) or insertPoint(slot, m.Y)
+	local e = newElement(kind)
+	addElementAt(slot, e, idx)
+end
+
+local function placeArmed(m)
+	if Armed then placeKind(Armed, m) end
+end
+
+local function refreshStatus()
+	local armedText = "Armed: none"
+	if Armed then
+		local card = CARD_BY_KIND[Armed]
+		armedText = "Armed: " .. (card and card.title or tostring(Armed)) .. " (right-click to place, Esc to clear)"
+	end
+	local selText = "Selected: none"
+	local S = Selected
+	if S then
+		if S.kind == "element" then
+			selText = ("Selected: %s (%s)"):format(S.obj.type, (S.obj.text and S.obj.text ~= "") and S.obj.text or S.obj.idx)
+		elseif S.kind == "groupbox" then
+			selText = "Selected: Groupbox (" .. tostring(S.obj.Name) .. ")"
+		elseif S.kind == "tabboxslot" then
+			selText = "Selected: Tabbox tab (" .. tostring(S.obj.Name) .. ")"
+		elseif S.kind == "tab" then
+			selText = "Selected: Tab (" .. tostring(S.obj.Name) .. ")"
+		elseif S.kind == "host" then
+			selText = "Selected: SubTab (" .. tostring(S.obj.Name) .. ")"
+		end
+	end
+	if SelLabel then pcall(function() SelLabel:SetText(armedText .. "\n" .. selText) end) end
+end
+
+for _, card in ipairs(CARDS) do
+	local gb = PMain:AddGroupbox({ Side = "Left", Name = card.title, Collapsed = true })
+	buildFields(gb, "D_" .. card.kind .. "_", card.fields)
+	gb:AddButton({
+		Text = "Arm",
+		Func = function()
+			Armed = card.kind
+			refreshStatus()
+		end,
+	})
+end
+
+local PL = PMain:AddGroupbox({ Side = "Right", Name = "Selected", IconName = "mouse-pointer-click" })
+SelLabel = PL:AddLabel("Armed: none\nSelected: none", true)
+PL:AddDropdown("PropTabSel", { Text = "Select tab or subtab", Values = { "-" }, Default = 1 })
+
+local function selHostContainer()
+	local S = Selected
+	if not S or S.kind == "tab" or S.kind == "host" then return nil end
+	return findHostOf(S.container or S.obj)
+end
+
+local function moveSelected(dir)
+	local S = Selected
+	if not S then return end
+	if S.kind == "element" then
+		local list = S.slot.Elements
+		local i = indexOf(list, S.obj)
+		if i and list[i + dir] then
+			list[i], list[i + dir] = list[i + dir], list[i]
+			commit(true)
+		end
+	elseif S.kind == "groupbox" or S.kind == "tabboxslot" then
+		local host = selHostContainer()
+		if not host then return end
+		local i = indexOf(host.Containers, S.container)
+		if i and host.Containers[i + dir] then
+			host.Containers[i], host.Containers[i + dir] = host.Containers[i + dir], host.Containers[i]
+			commit(true)
+		end
+	elseif S.kind == "tab" then
+		local i = indexOf(Spec.Tabs, S.obj)
+		if i and Spec.Tabs[i + dir] then
+			Spec.Tabs[i], Spec.Tabs[i + dir] = Spec.Tabs[i + dir], Spec.Tabs[i]
+			Sel.tab = i + dir
+			commit(true)
+		end
+	elseif S.kind == "host" then
+		local tab = S.tab
+		local i = indexOf(tab.Hosts, S.obj)
+		if i and tab.Hosts[i + dir] then
+			tab.Hosts[i], tab.Hosts[i + dir] = tab.Hosts[i + dir], tab.Hosts[i]
+			commit(true)
+		end
+	end
+end
+
+local function deleteSelected()
+	local S = Selected
+	if not S then return end
+	if S.kind == "element" then
+		removeFrom(S.slot.Elements, S.obj)
+	elseif S.kind == "groupbox" then
+		local host = selHostContainer()
+		if host then removeFrom(host.Containers, S.obj) end
+	elseif S.kind == "tabboxslot" then
+		local c = S.container
+		removeFrom(c.Tabs, S.obj)
+		if #c.Tabs == 0 then
+			local host = findHostOf(c)
+			if host then removeFrom(host.Containers, c) end
+		end
+	elseif S.kind == "host" then
+		if #S.tab.Hosts <= 1 then
+			return BNotify("Error", "A tab with SubTabs needs at least one SubTab")
+		end
+		removeFrom(S.tab.Hosts, S.obj)
+	elseif S.kind == "tab" then
+		removeFrom(Spec.Tabs, S.obj)
+	end
+	Selected = nil
+	commit(true)
+end
+
+PL:AddDivider()
+PL:AddButton({ Text = "Move Up", Func = function() moveSelected(-1) end })
+PL:AddButton({ Text = "Move Down", Func = function() moveSelected(1) end })
+PL:AddButton({
+	Text = "Duplicate (element)",
+	Func = function()
+		local S = Selected
+		if not S or S.kind ~= "element" then return end
+		Counter = Counter + 1
+		local copy = deepCopy(S.obj)
+		copy.idx = ("El%d"):format(Counter)
+		local i = indexOf(S.slot.Elements, S.obj)
+		if i then table.insert(S.slot.Elements, i + 1, copy) end
+		Selected = { kind = "element", obj = copy, slot = S.slot, container = S.container }
+		commit(true)
+	end,
+})
+PL:AddButton({ Text = "Delete selected", Func = deleteSelected, Risky = true, DoubleClick = true })
+
+local undo, redo
+
+local HG = PMain:AddGroupbox({ Side = "Right", Name = "History", IconName = "history" })
+HG:AddButton({ Text = "<  Undo", Func = function() undo() end })
+HG:AddButton({ Text = "Redo  >", Func = function() redo() end })
+
+local function refreshPropTabs()
+	PropEntries = {}
+	local list = {}
+	for ti, tab in ipairs(Spec.Tabs) do
+		local key = ("%d  %s"):format(ti, tab.Name)
+		list[#list + 1] = key
+		PropEntries[key] = { kind = "tab", tab = tab }
+		if tab.SubTabs then
+			for hi, host in ipairs(tab.Hosts) do
+				local k2 = ("%d.%d  %s > %s"):format(ti, hi, tab.Name, host.Name or ("SubTab " .. hi))
+				list[#list + 1] = k2
+				PropEntries[k2] = { kind = "host", tab = tab, host = host }
+			end
+		end
+	end
+	if #list == 0 then list = { "-" } end
+	local current = BO.PropTabSel and BO.PropTabSel.Value
+	local found = false
+	for _, v in ipairs(list) do if v == current then found = true end end
+	if not found then
+		current = list[1]
+		local S = Selected
+		if S then
+			for key, en in pairs(PropEntries) do
+				if (en.kind == "tab" and S.obj == en.tab) or (en.kind == "host" and S.obj == en.host) then
+					current = key
+				end
+			end
+		end
+	end
+	guarded(function()
+		BO.PropTabSel:SetValues(list)
+		BO.PropTabSel:SetValue(current)
+	end)
+end
+
+BO.PropTabSel:OnChanged(function()
+	if Guard > 0 then return end
+	local en = PropEntries[BO.PropTabSel.Value]
+	if not en then return end
+	if en.kind == "tab" then
+		Selected = { kind = "tab", obj = en.tab }
+		Sel.tab = indexOf(Spec.Tabs, en.tab) or Sel.tab
+	else
+		Selected = { kind = "host", obj = en.host, tab = en.tab }
+		Sel.tab = indexOf(Spec.Tabs, en.tab) or Sel.tab
+		Sel.host = indexOf(en.tab.Hosts, en.host) or Sel.host
+	end
+	loadProps()
+end)
+
+local rbToken = 0
+
+loadProps = function()
+	refreshStatus()
+end
+
+local function restoreView()
+	local t = curTab()
+	if t and t.live then pcall(function() t.live:Show() end) end
+	local h = curHost()
+	if t and t.SubTabs and h and h.live then pcall(function() h.live:Show() end) end
+end
+
+commit = function(reload, noHistory)
+	rbToken = rbToken + 1
+	if not noHistory then
+		table.insert(UndoStack, lastSnap)
+		if #UndoStack > 150 then table.remove(UndoStack, 1) end
+		RedoStack = {}
+	end
+	if Selected and Selected.kind == "element" and Selected.obj.type == "Tabbox" then
+		syncTabs(Selected.obj)
+	end
+	lastSnap = deepCopy(Spec.Tabs)
+	visibleHost(nil)
+	clampSel()
+	rebuild()
+	refreshPropTabs()
+	refreshCopyList()
+	restoreView()
+	if reload ~= false then loadProps() end
+	refreshStatus()
+end
+
+undo = function()
+	if #UndoStack == 0 then return BNotify("History", "Nothing to undo") end
+	table.insert(RedoStack, deepCopy(Spec.Tabs))
+	Spec.Tabs = table.remove(UndoStack)
+	lastSnap = deepCopy(Spec.Tabs)
+	Selected = nil
+	rbToken = rbToken + 1
+	clampSel()
+	rebuild()
+	refreshPropTabs()
+	refreshCopyList()
+	restoreView()
+	loadProps()
+end
+
+redo = function()
+	if #RedoStack == 0 then return BNotify("History", "Nothing to redo") end
+	table.insert(UndoStack, deepCopy(Spec.Tabs))
+	Spec.Tabs = table.remove(RedoStack)
+	lastSnap = deepCopy(Spec.Tabs)
+	Selected = nil
+	rbToken = rbToken + 1
+	clampSel()
+	rebuild()
+	refreshPropTabs()
+	refreshCopyList()
+	restoreView()
+	loadProps()
+end
+
+local function selectElementAt(m)
+	local e, slot = elementAt(m)
+	if not e then return false end
+	local ti, hi
+	eachSlot(function(s, c, h, t)
+		if s == slot then
+			ti = indexOf(Spec.Tabs, t)
+			hi = indexOf(t.Hosts, h)
+			return true
+		end
+	end)
+	if ti then Sel.tab = ti end
+	if hi then Sel.host = hi end
+	selectElementObj(e, slot)
+	return true
+end
+
+local function selectGroupAt(m)
+	local best, area
+	eachSlot(function(s, c)
+		local isMain = (c.Kind == "Groupbox" and s == c) or (c.Kind == "Tabbox" and indexOf(c.Tabs, s))
+		if isMain then
+			local x, y, w, h = slotRegion(s)
+			if x and m.X >= x and m.X <= x + w and m.Y >= y and m.Y <= y + h then
+				local a = w * h
+				if not area or a < area then best, area = { c, s }, a end
+			end
+		end
+	end)
+	if best then
+		local c, s = best[1], best[2]
+		if c.Kind == "Groupbox" then
+			Selected = { kind = "groupbox", obj = c, container = c, slot = c }
+		else
+			Selected = { kind = "tabboxslot", obj = s, container = c, slot = s }
+		end
+		return true
+	end
+	return false
+end
+
+DragGui = Instance.new("ScreenGui")
+DragGui.Name = "ObsidianPaintOverlay"
+DragGui.ResetOnSpawn = false
+DragGui.IgnoreGuiInset = true
+DragGui.DisplayOrder = 2000
+DragGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+safeParent(DragGui)
+
+local function mk(class, props)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = DragGui
+	return o
+end
+
+local Ind = mk("Frame", {
+	Size = UDim2.fromOffset(100, 3), BackgroundColor3 = ACCENT,
+	Visible = false, ZIndex = 49, BorderSizePixel = 0,
+})
+
+local function outline(color)
+	local f = mk("Frame", { BackgroundTransparency = 1, Visible = false, ZIndex = 48, BorderSizePixel = 0 })
+	local st = Instance.new("UIStroke")
+	st.Color, st.Thickness = color, 2
+	st.Parent = f
+	Instance.new("UICorner", f).CornerRadius = UDim.new(0, 4)
+	return f
+end
+local HlSel = outline(Color3.fromRGB(80, 200, 255))
+local HlDrop = outline(ACCENT)
+
+local function selectionRect()
+	local S = Selected
+	if not S then return nil end
+	if S.kind == "element" then return unionRect(S.obj.holders) end
+	if S.kind == "groupbox" or S.kind == "tabboxslot" then
+		local cont = containerOf(S.slot.live)
+		if cont and cont.Parent and isShown(cont) then return rectOf(cont) end
+	end
+	return nil
+end
+
+local function showSlotTarget(slot, m)
+	local idx, y, x, w = insertPoint(slot, m.Y)
+	Ind.Position = UDim2.fromOffset(x, y - 1)
+	Ind.Size = UDim2.fromOffset(w, 3)
+	Ind.Visible = true
+	local cont = containerOf(slot.live)
+	if cont and cont.Parent and isShown(cont) then
+		local p, s = rectOf(cont)
+		drawRect(HlDrop, p, s, 4)
+	else
+		HlDrop.Visible = false
+	end
+end
+
+local Ghost = mk("TextLabel", {
+	Size = UDim2.fromOffset(200, 26), BackgroundColor3 = ACCENT, BackgroundTransparency = 0.1,
+	TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 13, Text = "",
+	Visible = false, ZIndex = 50, BorderSizePixel = 0,
+})
+Instance.new("UICorner", Ghost).CornerRadius = UDim.new(0, 6)
+
+local Sink = mk("TextButton", {
+	Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+	Active = true, Visible = false, ZIndex = 40, BorderSizePixel = 0,
+})
+
+local DRAG_DIST = 8
+local Pending, Drag = nil, nil
+
+local function setDragLock(on)
+	pcall(function() if Main.Lib then Main.Lib.CantDragForced = on end end)
+	pcall(function() LibB.CantDragForced = on end)
+end
+
+local function previewDrag(m)
+	Drag.target = nil
+	Ind.Visible = false
+	HlDrop.Visible = false
+	local kind = Drag.kind
+	if Drag.src == "move" then
+		local slot = slotAt(m)
+		if slot and not slotInside(Drag.element, slot) then
+			Drag.target = { slot = slot, idx = insertPoint(slot, m.Y) }
+			showSlotTarget(slot, m)
+		end
+	elseif IS_ELEMENT[kind] then
+		local slot = slotAt(m)
+		if slot then
+			Drag.target = { slot = slot, idx = insertPoint(slot, m.Y) }
+			showSlotTarget(slot, m)
+		end
+	elseif kind == "Tabbox" then
+		local slot = slotAt(m)
+		if slot and slot.Kind == "Groupbox" then
+			Drag.target = { slot = slot, idx = insertPoint(slot, m.Y) }
+			showSlotTarget(slot, m)
+		elseif overWindow(Main.Lib, MAIN_TITLE, m) then
+			Drag.target = {}
+		end
+	elseif overWindow(Main.Lib, MAIN_TITLE, m) then
+		Drag.target = {}
+	end
+	Ghost.BackgroundColor3 = Drag.target and ACCENT or Color3.fromRGB(150, 70, 70)
+end
+
+local function finishPointer(m)
+	local d, p = Drag, Pending
+	Pending, Drag = nil, nil
+	Ghost.Visible = false
+	Ind.Visible = false
+	HlDrop.Visible = false
+	Sink.Visible = false
+	setDragLock(false)
+	if d then
+		if not d.target then return end
+		if d.src == "move" then
+			local from, e, to = d.slot, d.element, d.target
+			local idx = to.idx
+			if to.slot == from then
+				local fi = indexOf(from.Elements, e)
+				if fi and fi < idx then idx = idx - 1 end
+			end
+			removeFrom(from.Elements, e)
+			table.insert(to.slot.Elements, math.clamp(idx, 1, #to.slot.Elements + 1), e)
+			selectElementObj(e, to.slot)
+			commit(true)
+		else
+			placeKind(d.kind, m, d.target)
+		end
+	elseif p then
+		if p.src == "move" then
+			selectElementObj(p.element, p.slot)
+			loadProps()
+		elseif p.src == "palette" then
+			Armed = p.kind
+			refreshStatus()
+		else
+			if Armed then
+				placeArmed(m)
+			elseif selectElementAt(m) or selectGroupAt(m) then
+				loadProps()
+			end
+		end
+	end
+end
+
+Conns[#Conns + 1] = RunService.RenderStepped:Connect(function()
+	if Closing then return end
+	local p, s = selectionRect()
+	if p then drawRect(HlSel, p, s, 2) else HlSel.Visible = false end
+	local m = UIS:GetMouseLocation()
+	if Drag then
+		Ghost.Position = UDim2.fromOffset(m.X + 12, m.Y + 12)
+		previewDrag(m)
+		return
+	end
+	if Armed and IS_ELEMENT[Armed] and overWindow(Main.Lib, MAIN_TITLE, m) then
+		local slot = slotAt(m)
+		if slot then
+			showSlotTarget(slot, m)
+			return
+		end
+	end
+	Ind.Visible = false
+	HlDrop.Visible = false
+end)
+
+Conns[#Conns + 1] = UIS.InputBegan:Connect(function(i)
+	if Closing then return end
+	local t = i.UserInputType
+	if t == Enum.UserInputType.MouseButton2 then
+		local m = UIS:GetMouseLocation()
+		local card = cardAt(m)
+		if card then
+			Pending = { src = "palette", kind = card.kind, start = m }
+			return
+		end
+		local e, slot = elementAt(m)
+		if e then
+			Pending = { src = "move", kind = e.type, element = e, slot = slot, start = m }
+			return
+		end
+		Pending = { src = "place", start = m }
+	elseif t == Enum.UserInputType.Keyboard then
+		if i.KeyCode == Enum.KeyCode.Escape then
+			Armed = nil
+			refreshStatus()
+		elseif UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+			if i.KeyCode == Enum.KeyCode.Z then
+				undo()
+			elseif i.KeyCode == Enum.KeyCode.Y then
+				redo()
+			end
+		end
+	end
+end)
+
+Conns[#Conns + 1] = UIS.InputChanged:Connect(function(i)
+	if Closing or i.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+	if Pending and Pending.src ~= "place" and not Drag and (UIS:GetMouseLocation() - Pending.start).Magnitude > DRAG_DIST then
+		Drag = { src = Pending.src, kind = Pending.kind, element = Pending.element, slot = Pending.slot }
+		Ghost.Text = (Drag.src == "move" and "Move: " or "Add: ") .. tostring(Drag.kind)
+		Ghost.Visible = true
+		Sink.Visible = Drag.src == "move"
+		setDragLock(true)
+	end
+end)
+
+Conns[#Conns + 1] = UIS.InputEnded:Connect(function(i)
+	if Closing or i.UserInputType ~= Enum.UserInputType.MouseButton2 then return end
+	if Pending or Drag then
+		finishPointer(UIS:GetMouseLocation())
+	end
+end)
+
+local function stripPanelChrome()
+	if Stripped then return true end
+	local root = LibB.ScreenGui
+	if not root then return false end
+	local win, wa = nil, 0
+	for _, ch in ipairs(root:GetChildren()) do
+		if ch:IsA("GuiObject") then
+			local a = ch.AbsoluteSize.X * ch.AbsoluteSize.Y
+			if a > wa then win, wa = ch, a end
+		end
+	end
+	if not win or wa <= 0 then return false end
+	local W, Hh = win.AbsoluteSize.X, win.AbsoluteSize.Y
+
+	local sidebar
+	for _, d in ipairs(win:GetDescendants()) do
+		if d:IsA("TextLabel") and d.Text == PANEL_TAB then
+			local a = d
+			while a and a ~= win do
+				if a:IsA("GuiObject") and a.AbsoluteSize.Y > Hh * 0.5 and a.AbsoluteSize.X < W * 0.5 and a.AbsoluteSize.X > 30 then
+					sidebar = a
+				end
+				a = a.Parent
+			end
+			if sidebar then break end
+		end
+	end
+	if not sidebar then return false end
+	sidebar.Visible = false
+
+	if not Widened and sidebar.Parent then
+		for _, sib in ipairs(sidebar.Parent:GetChildren()) do
+			if sib ~= sidebar and sib:IsA("GuiObject") and sib.AbsoluteSize.Y > Hh * 0.5
+				and sib.AbsolutePosition.X >= sidebar.AbsolutePosition.X + sidebar.AbsoluteSize.X - 2 then
+				sib.Position = UDim2.new(sidebar.Position.X.Scale, sidebar.Position.X.Offset, sib.Position.Y.Scale, sib.Position.Y.Offset)
+				sib.Size = UDim2.new(
+					sib.Size.X.Scale + sidebar.Size.X.Scale, sib.Size.X.Offset + sidebar.Size.X.Offset,
+					sib.Size.Y.Scale, sib.Size.Y.Offset
+				)
+				ContentFrame = sib
+				Widened = true
+				break
+			end
+		end
+	end
+
+	local footerFound = false
+	for _, d in ipairs(win:GetDescendants()) do
+		if d:IsA("TextLabel") and d.Text == FOOTER_MARK then
+			footerFound = true
+			local bar = d.Parent
+			local a = d
+			while a and a ~= win do
+				if a:IsA("GuiObject") and a.AbsoluteSize.X > W * 0.9 and a.AbsoluteSize.Y < 40 then
+					bar = a
+					break
+				end
+				a = a.Parent
+			end
+			local barH = 0
+			if bar and bar:IsA("GuiObject") then
+				barH = bar.AbsoluteSize.Y
+				bar.Visible = false
+			end
+			d.Visible = false
+			if ContentFrame and not FooterAdjusted then
+				FooterAdjusted = true
+				ContentFrame.Size = UDim2.new(
+					ContentFrame.Size.X.Scale, ContentFrame.Size.X.Offset,
+					ContentFrame.Size.Y.Scale, ContentFrame.Size.Y.Offset + barH
+				)
+			end
+			break
+		end
+	end
+
+	if footerFound then Stripped = true end
+	return Stripped
+end
+
+lastSnap = deepCopy(Spec.Tabs)
+createMain()
+refreshPropTabs()
+loadProps()
+BNotify("Tab Builder", "Click a card to arm it, then right-click the GUI to place it")
+
+task.spawn(function()
+	for _ = 1, 80 do
+		if stripPanelChrome() then break end
+		task.wait(0.1)
+	end
+end)
