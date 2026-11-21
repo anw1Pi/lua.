@@ -10901,10 +10901,10 @@ function Library:CreateWindow(WindowInfo)
             Active = false,
             Position = UDim2.fromScale(0, 0),
             Size = UDim2.fromScale(1, 1),
-            ScaleType = Enum.ScaleType.Stretch,
-            ZIndex = Overlay.ZIndex + 1,
+            ScaleType = Enum.ScaleType.Crop,
+            ZIndex = 0,
             BackgroundTransparency = 1,
-            ImageTransparency = 0.75,
+            ImageTransparency = 0.25,
             Visible = false,
             Parent = ScreenGui,
         })
@@ -14380,6 +14380,7 @@ function Library:CreateWindow(WindowInfo)
     end))
 
     Window.MainFrame = MainFrame
+    Window.BackgroundImage = BackgroundImage
     Library.Window = Window
 
     return Window
@@ -16356,6 +16357,12 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
     end)
 
     ThemeManager:LoadDefault()
+
+    -- open with the "Moon" background preset unless a saved theme already set an image
+    if BackgroundImage.Value == nil or BackgroundImage.Value == "" then
+        BackgroundImage:SetValue(BackgroundPresets["Moon"])
+    end
+
     ThemeManager:UpdateContrastWarning()
     ThemeManager.AppliedToTab = true
     RefreshDefaultThemeLabel()
@@ -35691,7 +35698,7 @@ tbl15 = {
 		Script = tbl15.Home:AddGroupbox({
             Side = 'Left',
             Name = '<b>Script</b>',
-            Description = '<b>Server hop,ServerCrash,Scripts</b>',
+            Description = '<b>Server hop,Scripts</b>',
             IconName = 'monitor',
             PopOut = true,
         })
@@ -35699,7 +35706,6 @@ tbl15 = {
             Side = 'Left',
             Name = 'Options',
         })
-        ServerCr = ScriptDisplayTabbox:AddTab('<b>Server Crash</b>')
         Scripts = ScriptDisplayTabbox:AddTab('<b>Script</b>')
         ServerHop = ScriptDisplayTabbox:AddTab('<b>Server-Hop</b>')
 
@@ -35732,24 +35738,6 @@ tbl15 = {
 			})
 
             
-        ServerCr:AddButton({
-        Text = 'Server Shutdown',
-        Tooltip = "Shuts down the server",
-        Func = function()
-            task.spawn(function()
-                local ok, err = pcall(function()
-                    loadstring(game:HttpGet('https://raw.githubusercontent.com/LovelyHub-Cranel/LovelyHub/refs/heads/main/servercrash'))()
-                end)
-
-                Library:Notify({
-                    Title = 'Moon',
-                    Description = 'Server Shutdown Started',
-                    Time = 3,
-                    BigIcon = "rbxassetid://92788301326379",
-                })
-            end)
-        end,
-    })
 			
 
 			Scripts:AddToggle("AutoRj", {
@@ -39740,6 +39728,26 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
+        local SrvrC = G1other:AddRightGroupbox("Server Shutdown")
+
+        SrvrC:AddButton({
+        Text = 'Server Shutdown',
+        Tooltip = "Shuts down the server",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/LovelyHub-Cranel/LovelyHub/refs/heads/main/servercrash'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Server Shutdown Started',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
 		local Effects = G1other:AddRightGroupbox("Effects", "flask-conical")
 		tbl12.CreatePlayerDropdown(Effects, "Toy Effects", tbl7.SelectedPlayersEffect)
 		Effects:AddDivider("Method")
@@ -45949,6 +45957,111 @@ end)
 	task.spawn(function()
 
     local Themesbox,  ImageT, RainbowT, SettingsT = lib2:ApplyToTab(BackGr0)
+
+
+		do
+			local originalTransparency = setmetatable({}, { __mode = "k" })
+
+			local function applyBackgroundTransparency(value)
+				local mainFrame = v19 and v19.MainFrame
+				if not mainFrame then
+					return
+				end
+
+				local function apply(obj)
+					if not (obj:IsA("Frame") or obj:IsA("ScrollingFrame") or obj:IsA("TextButton")) then
+						return
+					end
+					if originalTransparency[obj] == nil then
+						originalTransparency[obj] = obj.BackgroundTransparency
+					end
+					local original = originalTransparency[obj]
+					if original >= 1 then
+						return
+					end
+					-- skip thin divider lines so they stay visible
+					if obj.Size.Y.Offset > 0 and obj.Size.Y.Offset <= 2 or obj.Size.X.Offset > 0 and obj.Size.X.Offset <= 2 then
+						return
+					end
+					obj.BackgroundTransparency = 1 - (1 - original) * (1 - value)
+				end
+
+				-- main window, sidebar, container, footer and groupbox backgrounds (toggles/sliders keep their own background)
+				apply(mainFrame)
+				for _, child in mainFrame:GetChildren() do
+					apply(child)
+					if child.Name == "FooterClip" then
+						for _, sub in child:GetDescendants() do
+							apply(sub)
+						end
+					end
+				end
+
+				for _, obj in mainFrame:GetDescendants() do
+					local reg = lib.Registry[obj]
+					if reg and reg.BackgroundColor3 == "BackgroundColor" and obj:IsA("Frame") then
+						apply(obj)
+					end
+				end
+			end
+
+			ImageT:AddSlider("BGTransparencySlider", {
+				Text = "Background Transparency",
+				Default = 60,
+				Min = 0,
+				Max = 100,
+				Rounding = 0,
+				Suffix = "%",
+				Compact = true,
+				Callback = function(value)
+					applyBackgroundTransparency(value / 100)
+				end,
+			})
+
+			applyBackgroundTransparency(0.6)
+		end
+
+		do
+			local function findBackgroundImage()
+				return v19 and v19.BackgroundImage
+			end
+
+			ImageT:AddSlider("BGImageClarity", {
+				Text = "Background Image Clarity",
+				Default = 75,
+				Min = 0,
+				Max = 100,
+				Rounding = 0,
+				Suffix = "%",
+				Compact = true,
+				Callback = function(value)
+					local image = findBackgroundImage()
+					if image then
+						image.ImageTransparency = 1 - value / 100
+					end
+				end,
+			})
+
+			ImageT:AddToggle("BGImageKeepRatio", {
+				Text = "Sharp Image (no stretch)",
+				Default = true,
+				Callback = function(state)
+					local image = findBackgroundImage()
+					if image then
+						image.ScaleType = state and Enum.ScaleType.Crop or Enum.ScaleType.Stretch
+					end
+				end,
+			})
+
+			task.defer(function()
+				local image = findBackgroundImage()
+				if image then
+					image.ImageTransparency = 1 - 75 / 100
+					image.ScaleType = Enum.ScaleType.Crop
+					image.ZIndex = 0
+				end
+			end)
+		end
 
     -- ===== Rainbow border (renk / hiz menuden degistirilebilir) =====
 		local MainFrame
