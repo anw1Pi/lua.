@@ -31868,12 +31868,16 @@ end
 			end
 		end)
 
-		tbl12.CreatePlayerDropdown = function(arg, arg2, arg3, arg4, arg5, arg6, arg7)
+		tbl12.CreatePlayerDropdown = function(arg, arg2, arg3, arg4, arg5, arg6, arg7, allowProtected)
 			if not arg or not arg3 then
 				fn18("Something went wrong, tell the owner about this notification.")
 				return
 			end
 			local flag12 = arg5 ~= false
+			-- allowProtected = true: Whitelist/Immunity listeleri icin admin filtresini kapatir
+			local function isBlocked(p)
+				return allowProtected ~= true and tbl12.IsProtectedPlayer(p)
+			end
 			local flag13 = arg4 ~= false
 			local tbl16 = { Dropdown = nil, Values = arg3, Selected = {}, Index = arg2, Multi = flag13 }
 
@@ -31893,11 +31897,11 @@ end
 
 					if flag13 then
 						for k, v22 in pairs(arg8) do
-							if not tbl12.IsProtectedPlayer(k) then
+							if not isBlocked(k) then
 								arg3[k] = v22
 							end
 						end
-					elseif arg8 and not tbl12.IsProtectedPlayer(arg8) then
+					elseif arg8 and not isBlocked(arg8) then
 						arg3[arg8] = true
 					end
 
@@ -31905,11 +31909,11 @@ end
 
 					if flag13 then
 						for k, v22 in pairs(arg8) do
-							if not tbl12.IsProtectedPlayer(k) then
+							if not isBlocked(k) then
 								tbl16.Selected[k] = v22
 							end
 						end
-					elseif arg8 and not tbl12.IsProtectedPlayer(arg8) then
+					elseif arg8 and not isBlocked(arg8) then
 						tbl16.Selected[arg8] = true
 					end
 
@@ -31923,7 +31927,7 @@ end
 			table.insert(tbl7.PlayerDropdowns, tbl16)
 
 			local function fn21(arg8)
-				if tbl12.IsProtectedPlayer(arg8) then
+				if isBlocked(arg8) then
 					return fn18("This player has Moon immunity.")
 				end
 
@@ -35661,7 +35665,7 @@ tbl15 = {
     AutoClicker = v19:AddTab("<b>Auto-Clicker</b>", "mouse-pointer-click", "Make figures out of players", true),
     Keybinds = v19:AddTab("<b>Keybinds</b>", "keyboard", "Keybinds you can press for specific action", true),
     Misc = v19:AddTab("<b>Misc</b>", "funnel", "Other things", true),
-    Lists = v19:AddTab("<b>Lists</b>", "scroll-text", "Miscellaneous useful dropdowns", true),
+    Lists = v19:AddTab({ Name = "<b>Lists</b>", Icon = "scroll-text", Description = "Miscellaneous useful dropdowns and scripts", SubTabs = true }),
     Settings = v19:AddTab({ Name = "<b>Settings</b>", Icon = "settings", Description = "GUI Settings", SubTabs = true }),
 }
 
@@ -35716,14 +35720,6 @@ tbl15 = {
 			greeting = "Evening"
 		end
 		Greetings:AddLabel({ Text = ("%s, <b>%s</b> "):format(greeting, localPlayer.DisplayName), DoesWrap = true })
-		Greetings:AddDivider()
-		Greetings:AddLabel({ Text = "Welcome to <b><font color=\"#eae6ff\">Moon</font></b>", DoesWrap = true })
-		Greetings:AddLabel({ Text = "Thanks for liking anime girls!!!<b>they will be by your side throughout your life</b>", DoesWrap = true })
-        Greetings:AddDivider()
-		Greetings:AddLabel(string.format("<font color='#94A3B8'>Account Age</font>  <b>%d days</b>", localPlayer.AccountAge))
-		Greetings:AddLabel(string.format("<font color='#94A3B8'>User ID</font>  <b>%d</b>", localPlayer.UserId))
-
-		Greetings:AddDivider("Quick Access")
 
 		local quickVisuals = Greetings:AddButton({
 			Text = "Visuals",
@@ -35740,6 +35736,13 @@ tbl15 = {
 				tbl15.Settings:Show()
 			end,
 		})
+		Greetings:AddDivider()
+		Greetings:AddLabel({ Text = "Welcome to <b><font color=\"#eae6ff\">Moon</font></b>", DoesWrap = true })
+		Greetings:AddLabel({ Text = "Thanks for liking anime girls!!!<b>they will be by your side throughout your life</b>", DoesWrap = true })
+        Greetings:AddDivider()
+		Greetings:AddLabel(string.format("<font color='#94A3B8'>Account Age</font>  <b>%d days</b>", localPlayer.AccountAge))
+		Greetings:AddLabel(string.format("<font color='#94A3B8'>User ID</font>  <b>%d</b>", localPlayer.UserId))
+
 	end
 
 
@@ -45261,9 +45264,230 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		end
 	end)
 
+    local Whitl = tbl15.Lists:AddSubTab("Whitelist", "badge-check")
+	local scrpt2 = tbl15.Lists:AddSubTab("Scripts", "file-code")
+
 	do
-		local Whitelist = tbl15.Lists:AddLeftGroupbox("Whitelist", "shield-check")
-		local v20 = tbl12.CreatePlayerDropdown(Whitelist, "Whitelist", tbl7.Whitelisted)
+
+        local lblscpt = scrpt2:AddLeftGroupbox("Attention")
+        lblscpt:AddLabel({ Text = "These scripts have been provided for you to try out they aren't particularly good.", DoesWrap = true })
+        lblscpt:AddLabel({ Text = "It is recommended to open no more than 2 scripts.", DoesWrap = true })
+
+        local Oldscpt = scrpt2:AddRightGroupbox("Old Scripts")
+
+     Oldscpt:AddButton({
+        Text = 'Blizt',
+        Tooltip = "Blizt Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Lovely%20blizt'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'VHS',
+        Tooltip = "VHS Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/VHS%20LOVELY'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Verbal',
+        Tooltip = "Verbal Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/vebral'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'NoName',
+        Tooltip = "NoName Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/noname'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Ragalic',
+        Tooltip = "Ragalic Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Lovely%20ragalic'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Posral',
+        Tooltip = "Posral Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/posral'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+
+
+    local Newscpt = scrpt2:AddLeftGroupbox("New Scripts")
+
+    Newscpt:AddButton({
+        Text = 'Genesıs V2',
+        Tooltip = "Genesıs V2 Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Genes%C4%B1s'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Mercury',
+        Tooltip = "Mercury Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Mercury'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Apex',
+        Tooltip = "Apex Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/apex'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Pluton V2',
+        Tooltip = "Pluton V2 Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/plutonV2'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+
+		local Whitelist = Whitl:AddLeftGroupbox("Whitelist", "shield-check")
+		local v20 = tbl12.CreatePlayerDropdown(Whitelist, "Whitelist", tbl7.Whitelisted, nil, nil, nil, nil, true)
 
 		v20:OnChanged(function()
 			if tbl8.SilentAim then
@@ -45279,7 +45503,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		end)
 
 		local function fn21(arg, arg2)
-			if flag11 or not tbl8.AutoWhitelistFriends or arg == localPlayer or arg.Parent ~= Players or tbl12.IsProtectedPlayer(arg) then
+			if flag11 or not tbl8.AutoWhitelistFriends or arg == localPlayer or arg.Parent ~= Players then
 				return
 			end
 			local flag12 = v20.Value[arg] == true
@@ -45379,8 +45603,8 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	toggles.AutoWhitelistFriends:SetValue(true)
 
 	do
-		local Immunity = tbl15.Lists:AddRightGroupbox("Immunity", "shield-user")
-		tbl12.CreatePlayerDropdown(Immunity, "Immunity", tbl7.ImmunePlayers)
+		local Immunity = Whitl:AddRightGroupbox("Immunity", "shield-user")
+		tbl12.CreatePlayerDropdown(Immunity, "Immunity", tbl7.ImmunePlayers, nil, nil, nil, nil, true)
 		Immunity:AddDivider("Modes")
 
 		Immunity:AddToggle("ImmunityAGToggle", {
