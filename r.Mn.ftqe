@@ -17925,6 +17925,14 @@ do
 							InputLgDelay = 0.05,
 							GucciType = "CreatureBlobman",
 							AKType = "Shuriken",
+							StreamerScope = "only You",
+							StreamerNickname = "redacted",
+							AKOffsetX = 0,
+							AKOffsetY = -0.3,
+							AKOffsetZ = 0,
+							AKRotX = 90,
+							AKRotY = 0,
+							AKRotZ = 0,
 							AntiInputType = "FoodHamburger",
 							FasterEscape = 3,
 							AGType = "Normal",
@@ -19863,6 +19871,52 @@ end)
 							end
 
 							return (format(str6, displayName, str7, v24.Name))
+						end
+
+						local baseFormatPlayer = tbl12.FormatPlayer
+						local streamerNameCache = setmetatable({}, { __mode = "k" })
+						local streamerNameCount = 0
+
+						local function streamerTargetActive(target)
+							if not target or not toggles or not toggles.StreamerMode or not toggles.StreamerMode.Value then
+								return false
+							end
+
+							if tbl9.StreamerScope == "only You" then
+								return target == localPlayer
+							end
+
+							return true
+						end
+
+						tbl12.FormatPlayer = function(arg, arg2, arg3)
+							local target
+
+							if type(arg) ~= "string" then
+								target = arg
+							else
+								target = Players:FindFirstChild(arg)
+							end
+
+							if streamerTargetActive(target) then
+								local streamerName = streamerNameCache[target]
+
+								if not streamerName then
+									streamerNameCount += 1
+									local streamerNick = tbl9.StreamerNickname
+
+									if streamerNick == nil or streamerNick == "" then
+										streamerNick = "redacted"
+									end
+
+									streamerName = streamerNick .. streamerNameCount
+									streamerNameCache[target] = streamerName
+								end
+
+								return ("%s%s (@%s)"):format(streamerName, arg2 and "\n" or "", streamerName)
+							end
+
+							return baseFormatPlayer(arg, arg2, arg3)
 						end
 
 						tbl12.PacketHandler = function(arg, arg2, arg3)
@@ -29733,6 +29787,26 @@ end
 				end
 			end
 
+			tbl12.ResolveDesync = function(arg)
+				local value22, value23, value24 = tbl12.Char(arg)
+
+				if arg == localPlayer or tbl12.IsProtectedPlayer(arg) then
+					return
+				end
+
+				if not (value22 and value23 and value24 and value24.Health ~= 0 and tbl12.GetMagnitude(workspace.SpawnLocation, value23) < 15000) then
+					return
+				end
+
+				if not tbl12.IsPartOwner(value23) and not tbl12.SNO(value23) then
+					return false
+				end
+
+				tbl12.ResetVelocity(value23)
+				task.delay(0.35, tbl12.RNO, value23)
+				return value23.Parent ~= nil
+			end
+
 			tbl12.EatAntiInput = function(arg)
 				local v22 = tbl12.Char(arg)
 
@@ -31993,6 +32067,10 @@ end
 				v23.Massless = false
 			end
 
+			if targetMethods["Resolve Desync"] then
+				fn21("Resolve Desync", tbl12.ResolveDesync)
+			end
+
 			if targetMethods.Bring then
 				fn21("Bring", tbl12.BringPlayer)
 			end
@@ -33552,14 +33630,46 @@ Escape Timer: %*]]
 				until flag11 or not tbl8.AntiKick or os.clock() >= n36
 			end
 
+			local AK_TOY_NAMES = {
+				Shuriken = "NinjaShuriken",
+				Katana = "NinjaKatana",
+				Kunai = "NinjaKunai",
+				Cleaver = "ToolCleaver",
+				["Rusty Fork"] = "ToolDiggingForkRusty",
+				Pencil = "ToolPencil",
+				Pickaxe = "ToolPickaxe",
+			}
+
 			local function fn22(arg)
-				local NinjaShuriken = tbl12.SpawnToy("NinjaShuriken", arg.CFrame + Vector3.new(0, 15, 0), 3, true)
-				local stickyPart = NinjaShuriken and NinjaShuriken:WaitForChild("StickyPart", 1.5)
+				local akType = tbl9.AKType
+				local toyName = AK_TOY_NAMES[akType] or "NinjaShuriken"
+				local toy = tbl12.SpawnToy(toyName, arg.CFrame + Vector3.new(0, 15, 0), 3, true)
+				local stickyPart = toy and toy:WaitForChild("StickyPart", 1.5)
 				local stickyWeld = stickyPart and stickyPart:WaitForChild("StickyWeld", 1.5)
+
 				if stickyPart and stickyWeld and tbl12.SNO(stickyPart) then
-					return NinjaShuriken, stickyPart, stickyWeld
+					toy:SetAttribute("AKToyType", akType)
+					return toy, stickyPart, stickyWeld
 				end
-				tbl12.DestroyToy(NinjaShuriken)
+
+				if toy then
+					tbl12.DestroyToy(toy)
+				end
+
+				if toy and toyName ~= "NinjaShuriken" then
+					local shuriken = tbl12.SpawnToy("NinjaShuriken", arg.CFrame + Vector3.new(0, 15, 0), 3, true)
+					local sPart = shuriken and shuriken:WaitForChild("StickyPart", 1.5)
+					local sWeld = sPart and sPart:WaitForChild("StickyWeld", 1.5)
+
+					if sPart and sWeld and tbl12.SNO(sPart) then
+						shuriken:SetAttribute("AKToyType", akType)
+						return shuriken, sPart, sWeld
+					end
+
+					if shuriken then
+						tbl12.DestroyToy(shuriken)
+					end
+				end
 			end
 
 			task.spawn(function()
@@ -33594,8 +33704,13 @@ Escape Timer: %*]]
 							end
 						end
 
-						if tbl9.AKType == "Shuriken" then
+						if tbl9.AKType ~= nil then
 							local parent2, shurHighlight, highlight2, antiKick, forcefieldChar, transparency, isMeshPart
+
+							if v18 and v18.Parent and v18:GetAttribute("AKToyType") ~= tbl9.AKType then
+								tbl12.DestroyToy(v18)
+								v18 = nil
+							end
 
 							if not (v18 and v18.Name == "ShurikenRSC" and v18:FindFirstChild("StickyPart") and v18.StickyPart:FindFirstChild("StickyWeld") and v18.StickyPart.StickyWeld.Part1 == ragdollTouchedHitbox) then
 								local stickyPart = nil
@@ -33629,7 +33744,7 @@ Escape Timer: %*]]
 												end
 											end)
 
-											tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+											tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 											now3 = tick()
 
 											while true do
@@ -33728,7 +33843,7 @@ Escape Timer: %*]]
 											end
 										end)
 
-										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 										now3 = tick()
 
 										while true do
@@ -33834,7 +33949,7 @@ Escape Timer: %*]]
 											end
 										end)
 
-										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 										now3 = tick()
 
 										while true do
@@ -35607,7 +35722,26 @@ tbl15 = {
         Greetings:AddDivider()
 		Greetings:AddLabel(string.format("<font color='#94A3B8'>Account Age</font>  <b>%d days</b>", localPlayer.AccountAge))
 		Greetings:AddLabel(string.format("<font color='#94A3B8'>User ID</font>  <b>%d</b>", localPlayer.UserId))
+
+		Greetings:AddDivider("Quick Access")
+
+		local quickVisuals = Greetings:AddButton({
+			Text = "Visuals",
+			Tooltip = "Quickly jump to the Visuals tab",
+			Func = function()
+				tbl15.Visual:Show()
+			end,
+		})
+
+		quickVisuals:AddButton({
+			Text = "Settings",
+			Tooltip = "Quickly jump to the Settings tab",
+			Func = function()
+				tbl15.Settings:Show()
+			end,
+		})
 	end
+
 
 		do
 			local Statistics = tbl15.Home:AddRightGroupbox("Statistics", "chart-no-axes-combined")
@@ -35698,7 +35832,7 @@ tbl15 = {
 		Script = tbl15.Home:AddGroupbox({
             Side = 'Left',
             Name = '<b>Script</b>',
-            Description = '<b>Server hop,Scripts</b>',
+            Description = '<b>Server hop,Scripts,Streamer Mode</b>',
             IconName = 'monitor',
             PopOut = true,
         })
@@ -35708,6 +35842,47 @@ tbl15 = {
         })
         Scripts = ScriptDisplayTabbox:AddTab('<b>Script</b>')
         ServerHop = ScriptDisplayTabbox:AddTab('<b>Server-Hop</b>')
+        stmrmod = ScriptDisplayTabbox:AddTab('<b>Streamer-Mod</b>')
+
+        
+
+		stmrmod:AddToggle("StreamerMode", {
+			Text = "Disabled",
+			Default = false,
+			Tooltip = "Hides player names with generic replacements",
+			Callback = function(streamerMode)
+				if toggles.StreamerMode and toggles.StreamerMode.SetText then
+					toggles.StreamerMode:SetText(streamerMode and "Enabled" or "Disabled")
+				end
+			end,
+		})
+
+		stmrmod:AddDropdown("StreamerScope", {
+			Values = { "only You", "Everyone" },
+			ValueImages = {
+				["only You"] = "user",
+				["Everyone"] = "users",
+			},
+			Default = "only You",
+			Multi = false,
+			Text = "Affects",
+			Callback = function(streamerScope)
+				tbl9.StreamerScope = streamerScope
+			end,
+		})
+
+		stmrmod:AddInput("StreamerNickname", {
+			Default = "redacted",
+			Numeric = false,
+			Finished = true,
+			Placeholder = "redacted",
+			Text = "Nickname",
+			Tooltip = "What player names get replaced with",
+			Callback = function(streamerNickname)
+				tbl9.StreamerNickname = streamerNickname
+			end,
+		})
+	
 
 			Scripts:AddButton({
 				Text = "Unload Script",
@@ -37433,6 +37608,36 @@ Teleporting:AddToggle("MiniMap", {
 				end)
 			end,
 		})
+        Antis:AddToggle("AntiStickyExploit", {
+			Text = "Anti Sticky-Exploit",
+			Default = false,
+			Tooltip = "Destroys sticky parts that get welded onto you (anti sticky lag)",
+			Callback = function(arg)
+				featureState.AntiStickyExploit = arg
+
+				if arg and featureState.AntiSticky then
+					toggles.AntiSticky:SetValue(false)
+				end
+
+				toggles.AntiSticky:SetDisabled(arg)
+
+				task.spawn(function()
+					while featureState.AntiStickyExploit and task.wait(0.1) do
+						local value20 = tbl12.Char()
+
+						if value20 then
+							for _, value21 in pairs(value20:QueryDescendants("BasePart")) do
+								for _, value22 in pairs(value21:GetConnectedParts()) do
+									if value22.Name == "StickyPart" and value22.Parent and not value22:IsDescendantOf(value20) and not value22:IsDescendantOf(workspace.PlotItems) then
+										value22:Destroy()
+										end
+									end
+								end
+							end
+					end
+				end)
+			end,
+		})
 
 		Antis:AddToggle("AntiSnowball", {
 			Text = "Anti Snowball",
@@ -38187,9 +38392,284 @@ Miscellaneous:AddToggle("AntiVoid", {
 
 local AutoRes = DefSet:AddRightGroupbox("Auto Reset", "refresh")
 local AntiG   = DefSet:AddLeftGroupbox("AntiGrab-Set", "shield")
-local AntiK   = DefSet:AddLeftGroupbox("AntiKick-Set", "lock")
+
+local Antik = DefSet:AddGroupbox({
+            Side = 'Left',
+            Name = '<b>AntiKick-Set</b>',
+            Description = '<b>Anti Kick Settings</b>',
+            IconName = 'lock',
+            PopOut = true,
+        })
+        ScriptDisplayTabbox = Antik:AddTabbox({
+            Side = 'Left',
+            Name = 'Options',
+        })
+        AntiK = ScriptDisplayTabbox:AddTab('<b>AntiKick-Set</b>')
+       AKickSet = ScriptDisplayTabbox:AddTab('<b>Setting</b>')
+
 local AntiOw  = DefSet:AddRightGroupbox("AntiNetwork-Set", "wifi")
 local Antilg  = DefSet:AddRightGroupbox("AntiLag-Set", "cpu")
+
+AntiK:AddDropdown("AKToy", {
+	Values = { "Shuriken", "Katana", "Kunai", "Cleaver", "Rusty Fork", "Pencil", "Pickaxe", "Any Sticky Toy" },
+	Default = "Shuriken",
+	Multi = false,
+	Text = "Toy",
+	Tooltip = "Which kind of toy anchors you while Anti Kick is running",
+	Callback = function(akToy)
+		tbl9.AKType = akToy == "Any Sticky Toy" and "Any" or akToy
+	end,
+})
+
+do
+local AKNotify = function(msg)
+	pcall(function() lib:Notify(msg) end)
+end
+
+local applyAntiKickOffsets = function()
+	local character, root, humanoid = tbl12.Char()
+
+	if not (character and humanoid and humanoid.Health > 0) then
+		return
+	end
+
+	local hitbox = character:FindFirstChild("RagdollTouchedHitbox")
+
+	if not hitbox then
+		return
+	end
+
+	local cframe = CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ))
+
+	for _, part in ipairs(character:GetChildren()) do
+		if part:IsA("BasePart") then
+			for _, connected in ipairs(part:GetConnectedParts()) do
+				local weld = connected:FindFirstChild("StickyWeld")
+
+				if weld and weld.Part1 == hitbox then
+					tbl11.StickyPartEvent:FireServer(connected, hitbox, cframe)
+				end
+			end
+		end
+	end
+end
+
+local setAKPosition = function(x, y, z, rx, ry, rz)
+	tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ = x, y, z
+	tbl9.AKRotX, tbl9.AKRotY, tbl9.AKRotZ = rx, ry, rz
+
+	if options.AKOffsetXS then options.AKOffsetXS:SetValue(x) end
+	if options.AKOffsetYS then options.AKOffsetYS:SetValue(y) end
+	if options.AKOffsetZS then options.AKOffsetZS:SetValue(z) end
+	if options.AKRotXS then options.AKRotXS:SetValue(rx) end
+	if options.AKRotYS then options.AKRotYS:SetValue(ry) end
+	if options.AKRotZS then options.AKRotZS:SetValue(rz) end
+
+	if tbl8.AntiKick then
+		applyAntiKickOffsets()
+	end
+end
+AKickSet:AddDivider("Toy Setting")
+
+AKickSet:AddSlider("AKOffsetXS", {
+	Text = "Offset X",
+	Default = 0,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetX = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKOffsetYS", {
+	Text = "Offset Y",
+	Default = -0.3,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetY = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKOffsetZS", {
+	Text = "Offset Z",
+	Default = 0,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetZ = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotXS", {
+	Text = "Rotation X",
+	Default = 90,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotX = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotYS", {
+	Text = "Rotation Y",
+	Default = 0,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotY = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotZS", {
+	Text = "Rotation Z",
+	Default = 0,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotZ = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddDivider()
+
+AKickSet:AddDropdown("AKPreset", {
+	Values = { "Pickaxe on Back", "Head Katana", "Ass Shuriken", "Belt Kunai", "Pencil Penis" },
+	Default = nil,
+	Multi = false,
+	Text = "Preset",
+	Callback = function(akPreset)
+		tbl9.AKPresetChoice = akPreset
+	end,
+})
+
+AKickSet:AddButton({
+	Text = "Load Preset",
+	Func = function()
+		local akPreset = tbl9.AKPresetChoice or (options.AKPreset and options.AKPreset.Value)
+
+		local akPresets = {
+			["Pickaxe on Back"] = { 0, 0.2, 1.1, 45, 0, 180 },
+			["Head Katana"] = { 0, 1.6, 0, 45, 0, 0 },
+			["Ass Shuriken"] = { 0, 0.4, -1, 90, 0, 0 },
+			["Belt Kunai"] = { 1.2, 0.2, 0, 0, 0, 90 },
+			["Pencil Penis"] = { 0, -0.4, 0.9, 0, 90, 0 },
+		}
+		local preset = akPresets[akPreset]
+
+		if not preset then
+			return AKNotify("Select a preset first!")
+		end
+
+		setAKPosition(preset[1], preset[2], preset[3], preset[4], preset[5], preset[6])
+	end,
+})
+
+AKickSet:AddInput("AKCustomPresetName", {
+	Text = "Custom Preset Name",
+	ClearTextOnFocus = false,
+	Callback = function() end,
+})
+
+AKickSet:AddButton({
+	Text = "Save Custom Preset",
+	Func = function()
+		local presetName = options.AKCustomPresetName and options.AKCustomPresetName.Value or ""
+
+		if presetName == "" then
+			return AKNotify("Enter a preset name first!")
+		end
+
+		if not (writefile and makefolder and isfolder) then
+			return AKNotify("Your executor does not support filesystem presets.")
+		end
+
+		local ok = pcall(function()
+			if not isfolder("Resonance") then
+				makefolder("Resonance")
+			end
+
+			if not isfolder("Resonance/AntiKickPresets") then
+				makefolder("Resonance/AntiKickPresets")
+			end
+
+			writefile("Resonance/AntiKickPresets/" .. presetName .. ".json", game:GetService("HttpService"):JSONEncode({
+				X = tbl9.AKOffsetX,
+				Y = tbl9.AKOffsetY,
+				Z = tbl9.AKOffsetZ,
+				RotX = tbl9.AKRotX,
+				RotY = tbl9.AKRotY,
+				RotZ = tbl9.AKRotZ,
+			}))
+		end)
+
+		AKNotify(ok and ("Preset saved: " .. presetName) or "Couldn't write the preset file.")
+	end,
+})
+
+AKickSet:AddButton({
+	Text = "Load Custom Preset",
+	Func = function()
+		local presetName = options.AKCustomPresetName and options.AKCustomPresetName.Value or ""
+
+		if presetName == "" then
+			return AKNotify("Enter a preset name first!")
+		end
+
+		if not (readfile and isfile) then
+			return AKNotify("Your executor does not support filesystem presets.")
+		end
+
+		local path = "Resonance/AntiKickPresets/" .. presetName .. ".json"
+
+		if not isfile(path) then
+			return AKNotify("Preset not found: " .. presetName)
+		end
+
+		local ok, result = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(readfile(path))
+		end)
+
+		if not ok or type(result) ~= "table" then
+			return AKNotify("Couldn't read the preset file.")
+		end
+
+		setAKPosition(
+			tonumber(result.X) or 0,
+			tonumber(result.Y) or -0.3,
+			tonumber(result.Z) or 0,
+			tonumber(result.RotX) or 90,
+			tonumber(result.RotY) or 0,
+			tonumber(result.RotZ) or 0
+		)
+
+		AKNotify("Preset loaded: " .. presetName)
+	end,
+})
+
+AntiK:AddDivider()
+end
 		
         AutoRes:AddToggle("AutoReset", {
 			Text = "Auto Reset",
@@ -38488,7 +38968,7 @@ table.sort(DropdownValues)
 local SelectedToy1 = ToyList["Spooky Candle"] or ToyList[DropdownValues[1]]
 
 AntiK:AddDropdown("AntiKickItemDropdown", {
-    Text = "Anti Kick Item",
+    Text = "Item",
     Values = DropdownValues,
     Default = "Spray Can",
     Callback = function(Value)
@@ -38856,8 +39336,8 @@ end)
 
 		tbl12.AddRainbowToggle(AntiK, "RGBAKFill", "RGB Fill", "AKFill")
 		tbl12.AddRainbowToggle(AntiK, "RGBAKOutline", "RGB Outline", "AKOutline")
-
-		AntiK:AddSlider("FillTransAK", {
+        AKickSet:AddDivider("Color Setting")
+		AKickSet:AddSlider("FillTransAK", {
 			Text = "Fill Transparency",
 			Default = antiKickSettings.HighlightFT,
 			Min = 0,
@@ -38868,7 +39348,7 @@ end)
 			end,
 		})
 
-		AntiK:AddSlider("OutlTransAK", {
+		AKickSet:AddSlider("OutlTransAK", {
 			Text = "Outline Transparency",
 			Default = antiKickSettings.HighlightOT,
 			Min = 0,
@@ -38879,7 +39359,7 @@ end)
 			end,
 		})
 
-		AntiK:AddSlider("ShurTransAK", {
+		AKickSet:AddSlider("ShurTransAK", {
 			Text = "Shuriken Transparency",
 			Default = antiKickSettings.Transparency,
 			Min = 0,
@@ -38926,6 +39406,7 @@ end)
 				"Remove Gucci",
 				"Remove Invisibility",
 				"Delete Seatables",
+				"Resolve Desync",
 			},
 			Multi = true,
 			AllowNull = true,
@@ -44650,105 +45131,135 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		})
 	end
 
-	tbl15.Misc:AddLeftGroupbox("Cheaters", "drama"):AddButton({
-		Text = "Find Cheaters",
-		Func = function()
-			local tbl16 = {}
+	local Cheaters = tbl15.Misc:AddLeftGroupbox("Cheaters", "drama")
 
-			for _, v20 in tbl7.PlayerList, nil, nil do
-				if v20 ~= localPlayer then
-					local v21, v22, v23 = tbl12.Char(v20)
-					local fn21, ragdollTouchedHitbox, firePlayerPart, v24, v25
+	local function collectCheaters()
+		local tbl16 = {}
 
-					if v23 then
-						local seatPart = v23.SeatPart
+		local function hasStickyPart(arg)
+			if not arg or not arg.Parent then
+				return
+			end
 
-						if seatPart then
-							local seatWeld = seatPart:FindFirstChild("SeatWeld")
+			for _, v26 in arg:GetConnectedParts() do
+				if v26.Name == "StickyPart" then
+					return true
+				end
+			end
+		end
 
-							if not seatWeld or not seatWeld.Enabled then
-								tbl16[v20] = "Has Gucci"
-							elseif v22 then
-								fn21 = function(arg)
-									if not arg or not arg.Parent then
-										return
-									end
+		for _, v20 in tbl7.PlayerList, nil, nil do
+			if v20 ~= localPlayer then
+				local v21, v22, v23 = tbl12.Char(v20)
 
-									for _, v26 in arg:GetConnectedParts() do
-										if v26.Name == "StickyPart" then
-											return true
-										end
-									end
-								end
+				if v23 then
+					local seatPart = v23.SeatPart
+					local seatWeld = seatPart and seatPart:FindFirstChild("SeatWeld")
 
-								ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-								firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-								v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-								v25 = v24 or fn21(firePlayerPart)
-
-								if v25 then
-									tbl16[v20] = "Shuriken in HRP"
-								end
-							end
-						elseif v22 then
-							fn21 = function(arg)
-								if not arg or not arg.Parent then
-									return
-								end
-
-								for _, v26 in arg:GetConnectedParts() do
-									if v26.Name == "StickyPart" then
-										return true
-									end
-								end
-							end
-
-							ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-							firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-							v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-							v25 = v24 or fn21(firePlayerPart)
-
-							if v25 then
-								tbl16[v20] = "Shuriken in HRP"
-							end
-						end
+					if seatPart and (not seatWeld or not seatWeld.Enabled) then
+						tbl16[v20] = "Has Gucci"
 					elseif v22 then
-						fn21 = function(arg)
-							if not arg or not arg.Parent then
-								return
-							end
+						local ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
+						local firePlayerPart = v22:FindFirstChild("FirePlayerPart")
 
-							for _, v26 in arg:GetConnectedParts() do
-								if v26.Name == "StickyPart" then
-									return true
-								end
-							end
-						end
-
-						ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-						firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-						v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-						v25 = v24 or fn21(firePlayerPart)
-
-						if v25 then
+						if hasStickyPart(v22) or hasStickyPart(ragdollTouchedHitbox) or hasStickyPart(firePlayerPart) then
 							tbl16[v20] = "Shuriken in HRP"
 						end
 					end
+				elseif v22 then
+					local ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
+					local firePlayerPart = v22:FindFirstChild("FirePlayerPart")
+
+					if hasStickyPart(v22) or hasStickyPart(ragdollTouchedHitbox) or hasStickyPart(firePlayerPart) then
+						tbl16[v20] = "Shuriken in HRP"
+					end
+				end
+			end
+		end
+
+		return tbl16
+	end
+
+	local function reportCheaters(tbl16)
+		if not next(tbl16) then
+			return fn18("Cheaters not found!")
+		end
+		local str5 = "Cheaters Found\n\n"
+
+		for k, v20 in pairs(tbl16) do
+			str5 ..= ("[%*]\n%*\n\n"):format(tbl12.FormatPlayer(k), v20)
+		end
+
+		fn18(str5:sub(1, -3))
+	end
+
+	Cheaters:AddButton({
+		Text = "Find Cheaters",
+		Icon = "eye",
+		Func = function()
+			reportCheaters(collectCheaters())
+		end,
+	})
+
+	local autoFindLast = {}
+	local nextAutoFind = 0
+	local autoFindInterval = 15
+
+	Cheaters:AddToggle("AutoFindCheaters", {
+		Text = "Auto Find Cheaters",
+		Default = false,
+		Tooltip = "Automatically scans players for cheat indicators and notifies you when a new one appears",
+		Callback = function(autoFind)
+			if autoFind then
+				nextAutoFind = 0
+			end
+		end,
+	})
+
+	Cheaters:AddSlider("AutoFindInterval", {
+		Text = "Check Interval",
+		Default = 15,
+		Min = 5,
+		Max = 60,
+		Rounding = 0,
+		Compact = true,
+		Suffix = " seconds",
+		Callback = function(checkInterval)
+			autoFindInterval = checkInterval
+		end,
+	})
+
+	task.spawn(function()
+		while task.wait(1) do
+			if flag11 then
+				return
+			end
+
+			if not toggles.AutoFindCheaters or not toggles.AutoFindCheaters.Value then
+				continue
+			end
+
+			if os.clock() < nextAutoFind then
+				continue
+			end
+
+			nextAutoFind = os.clock() + math.clamp(autoFindInterval, 5, 60)
+			local currentCheaters = collectCheaters()
+
+			for player, reason in currentCheaters do
+				if autoFindLast[player] ~= reason then
+					autoFindLast[player] = reason
+					fn18(("Cheater detected: %s (%s)"):format(tbl12.FormatPlayer(player), reason))
 				end
 			end
 
-			if not next(tbl16) then
-				return fn18("Cheaters not found!")
+			for player in autoFindLast do
+				if not currentCheaters[player] then
+					autoFindLast[player] = nil
+				end
 			end
-			local str5 = "Cheaters Found\n\n"
-
-			for k, v20 in pairs(tbl16) do
-				str5 ..= ("[%*]\n%*\n\n"):format(tbl12.FormatPlayer(k), v20)
-			end
-
-			fn18(str5:sub(1, -3))
-		end,
-	})
+		end
+	end)
 
 	do
 		local Whitelist = tbl15.Lists:AddLeftGroupbox("Whitelist", "shield-check")
