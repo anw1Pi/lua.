@@ -21167,6 +21167,7 @@ end
 					end
 				end
 
+
 				tbl12.RemoveSticky = function(arg, arg2)
 					if not arg or not arg.Parent then
 						return
@@ -33028,7 +33029,7 @@ Part you are touching: %*]]):format(parent2.Name, str7, part1.Name)
 Name: %*
 Spawned Toys: %*
 Gamepasses: %*
-Escape Timer: %*]]
+Escape Timer: %* ]]
 
 										local format = str7.format
 										local v24 = name
@@ -35454,12 +35455,12 @@ Escape Timer: %*]]
 
 											kickAP = Instance.new("BodyPosition")
 											local bodyGyro = Instance.new("BodyGyro")
-											kickAP.D = 200
+											kickAP.D = DelayValue
 											kickAP.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 											kickAP.Position = v29
 											kickAP.Parent = v27
 											bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-											bodyGyro.D = 200
+											bodyGyro.D = DelayValue
 											bodyGyro.CFrame = CFrame.new()
 											bodyGyro.Parent = v27
 											kickAP.Name = "KickAP"
@@ -35489,6 +35490,7 @@ Escape Timer: %*]]
 											if tbl8.RagdollInNK then
 												task.spawn(tbl12.Ragdoll, v26)
 											end
+
 
 											if tbl8.DeleteShurInNK then
 												task.spawn(tbl12.RemoveSticky, v26)
@@ -39433,7 +39435,25 @@ end)
 			end,
 		})
         
+        local DelayValue = 200
 
+local function SetDelayMode(Value)
+    local Values = {
+        ["Low"] = 100,
+        ["Medium"] = 200,
+        ["High"] = 300,
+        ["Fast"] = 400
+    }
+
+    DelayValue = Values[Value] or 200
+end
+
+v21:AddDropdown("PhysicsDamping", {
+    Text = "Physics Damping",
+    Values = {"Low", "Medium", "High", "Fast"},
+    Default = "Medium",
+    Callback = SetDelayMode
+})
 
 		v21:AddToggle("RagdollNK", {
 			Text = "Loop Ragdoll",
@@ -39442,7 +39462,7 @@ end)
 				tbl8.RagdollInNK = ragdollInNK
 			end,
 		})
-    
+
 
 		v21:AddToggle("AntiKickRemoverNK", {
 			Text = "Remove Anti-Kick",
@@ -45484,6 +45504,8 @@ BuildGroup:AddToggle("AnimeImageToggle", {
             end)
         end,
     })
+
+    
 
 
 		local Whitelist = Whitl:AddLeftGroupbox("Whitelist", "shield-check")
