@@ -1304,7 +1304,7 @@ function Library:UpdateSearch(SearchText)
 
     local TabsToSearch = {}
     for _, Tab in Library.Tabs do
-        if typeof(Tab) == "table" and not Tab.IsKeyTab then
+        if typeof(Tab) == "table" and not Tab.IsKeyTab and not Tab.HasSubTabs then
             table.insert(TabsToSearch, Tab)
         end
     end
@@ -1331,6 +1331,7 @@ function Library:UpdateSearch(SearchText)
     local BestScore = -1
     local ActiveScore = -1
     local ActiveHasVisible = false
+    local CurrentTab = Library.ActiveTab and (Library.ActiveTab.ActiveSubTab or Library.ActiveTab)
 
     for _, Tab in TabsToSearch do
         local HasVisible, Score = ApplySearchToTab(Tab, Search)
@@ -1338,7 +1339,7 @@ function Library:UpdateSearch(SearchText)
             continue
         end
 
-        if Tab == Library.ActiveTab then
+        if Tab == CurrentTab then
             ActiveHasVisible = true
             ActiveScore = Score
         end
@@ -1366,7 +1367,8 @@ function Library:UpdateSearch(SearchText)
                 return
             end
 
-            if Library.ActiveTab ~= BestTab then
+            local Current = Library.ActiveTab and (Library.ActiveTab.ActiveSubTab or Library.ActiveTab)
+            if Current ~= BestTab then
                 BestTab:Show()
             elseif Library.ActiveTab then
                 Library.ActiveTab:RefreshSides()
@@ -10899,10 +10901,10 @@ function Library:CreateWindow(WindowInfo)
             Active = false,
             Position = UDim2.fromScale(0, 0),
             Size = UDim2.fromScale(1, 1),
-            ScaleType = Enum.ScaleType.Stretch,
-            ZIndex = Overlay.ZIndex + 1,
+            ScaleType = Enum.ScaleType.Crop,
+            ZIndex = 0,
             BackgroundTransparency = 1,
-            ImageTransparency = 0.75,
+            ImageTransparency = 0.25,
             Visible = false,
             Parent = ScreenGui,
         })
@@ -11543,12 +11545,13 @@ function Library:CreateWindow(WindowInfo)
         end
     end
 
-    function Window:AddTab(...)
+    local function CreateTab(ParentTab, ...)
         local Name = nil
         local Icon = nil
         local Description = nil
         local Tooltip = nil
         local Order = nil
+        local HasSubTabs = false
 
         if select("#", ...) == 1 and typeof(...) == "table" then
             local Info = select(1, ...)
@@ -11557,6 +11560,7 @@ function Library:CreateWindow(WindowInfo)
             Description = Info.Description
             Tooltip = Info.Tooltip
             Order = Info.Order
+            HasSubTabs = Info.SubTabs == true and ParentTab == nil
         else
             Name = select(1, ...)
             Icon = select(2, ...)
@@ -11565,11 +11569,14 @@ function Library:CreateWindow(WindowInfo)
         end
 
         if not tonumber(Order) then
-            Order = #Tabs:GetChildren()
+            Order = if ParentTab then ParentTab.SubTabCount + 1 else #Tabs:GetChildren()
         end
+
+        local TabKey = if ParentTab then ParentTab.Name .. "/" .. Name else Name
 
         local TabButton: TextButton
         local TabIndicator
+        local TabStroke
         local TabLabel
         local TabIcon
 
@@ -11577,8 +11584,74 @@ function Library:CreateWindow(WindowInfo)
         local TabLeft
         local TabRight
 
+        local SubTabBar
+        local SubTabHolder
+
         Icon = Library:GetCustomIcon(Icon)
-        do
+        if ParentTab then
+            TabButton = New("TextButton", {
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = "MainColor",
+                LayoutOrder = Order,
+                Size = UDim2.fromScale(0, 1),
+                Text = "",
+                Parent = ParentTab.SubTabBar,
+            })
+            table.insert(
+                Library.Corners,
+                New("UICorner", {
+                    CornerRadius = UDim.new(0, Library.CornerRadius / 2),
+                    Parent = TabButton,
+                })
+            )
+
+            TabStroke = New("UIStroke", {
+                Color = "OutlineColor",
+                Parent = TabButton,
+            })
+            Library:AddToRegistry(TabStroke, {
+                Color = function()
+                    return if ParentTab.ActiveSubTab and ParentTab.ActiveSubTab.Button == TabButton then Library.Scheme.AccentColor else Library.Scheme.OutlineColor
+                end,
+            })
+
+            New("UIPadding", {
+                PaddingLeft = UDim.new(0, 8),
+                PaddingRight = UDim.new(0, 8),
+                Parent = TabButton,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                HorizontalAlignment = Enum.HorizontalAlignment.Center,
+                Padding = UDim.new(0, 6),
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                VerticalAlignment = Enum.VerticalAlignment.Center,
+                Parent = TabButton,
+            })
+
+            if Icon then
+                TabIcon = New("ImageLabel", {
+                    ImageColor3 = Icon.Custom and "WhiteColor" or "AccentColor",
+                    ImageTransparency = 0.5,
+                    LayoutOrder = 1,
+                    ScaleType = Enum.ScaleType.Fit,
+                    Size = UDim2.fromOffset(16, 16),
+                    Parent = TabButton,
+                })
+                Library:ApplyLucideIcon(TabIcon, Icon)
+            end
+
+            TabLabel = New("TextLabel", {
+                AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundTransparency = 1,
+                LayoutOrder = 2,
+                Size = UDim2.fromOffset(0, 16),
+                Text = Name,
+                TextSize = 14,
+                TextTransparency = 0.5,
+                Parent = TabButton,
+            })
+        else
             TabButton = New("TextButton", {
                 BackgroundColor3 = "MainColor",
                 BackgroundTransparency = 1,
@@ -11650,14 +11723,54 @@ function Library:CreateWindow(WindowInfo)
                 Icon = TabIcon,
             })
 
-            TabContainer = New("Frame", {
+        end
+
+        TabContainer = New("Frame", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromScale(0, 0),
+            Size = UDim2.fromScale(1, 1),
+            Visible = false,
+            Parent = if ParentTab then ParentTab.SubTabHolder else Container,
+        })
+
+        if HasSubTabs then
+            SubTabBar = New("ScrollingFrame", {
+                AutomaticCanvasSize = Enum.AutomaticSize.X,
                 BackgroundTransparency = 1,
-                Position = UDim2.fromScale(0, 0),
-                Size = UDim2.fromScale(1, 1),
-                Visible = false,
-                Parent = Container,
+                CanvasSize = UDim2.fromScale(0, 0),
+                Position = UDim2.fromOffset(2, 5),
+                ScrollBarThickness = 0,
+                ScrollingDirection = Enum.ScrollingDirection.X,
+                Size = UDim2.new(1, -4, 0, 30),
+                Parent = TabContainer,
+            })
+            New("UIListLayout", {
+                FillDirection = Enum.FillDirection.Horizontal,
+                Padding = UDim.new(0, 8),
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                Parent = SubTabBar,
+            })
+            New("UIPadding", {
+                PaddingBottom = UDim.new(0, 3),
+                PaddingLeft = UDim.new(0, 1),
+                PaddingRight = UDim.new(0, 1),
+                PaddingTop = UDim.new(0, 3),
+                Parent = SubTabBar,
             })
 
+            Library:MakeLine(TabContainer, {
+                Position = UDim2.fromOffset(-6, 40),
+                Size = UDim2.new(1, 12, 0, 1),
+            })
+
+            SubTabHolder = New("Frame", {
+                BackgroundTransparency = 1,
+                ClipsDescendants = true,
+                Position = UDim2.fromOffset(0, 41),
+                Size = UDim2.new(1, 0, 1, -41),
+                Parent = TabContainer,
+            })
+        else
             TabLeft = New("ScrollingFrame", {
                 AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 BackgroundTransparency = 1,
@@ -11738,6 +11851,9 @@ function Library:CreateWindow(WindowInfo)
             Destroyed = false,
 
             Window = Window,
+            ParentTab = ParentTab,
+            IsSubTab = ParentTab ~= nil,
+
             Button = TabButton,
             Container = TabContainer,
             Sides = {
@@ -11755,6 +11871,15 @@ function Library:CreateWindow(WindowInfo)
             Groupboxes = {},
             Tabboxes = {},
             DependencyGroupboxes = {},
+
+            HasSubTabs = HasSubTabs,
+            SubTabBar = SubTabBar,
+            SubTabHolder = SubTabHolder,
+
+            SubTabs = {},
+            SubTabCount = 0,
+            ActiveSubTab = nil,
+            PreviousSubTab = nil,
         }
 
         local WarningBoxHolder = New("Frame", {
@@ -11869,6 +11994,10 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:UpdateWarningBox(Info)
+            if HasSubTabs then
+                error(string.format("Tab '%s' uses SubTabs, update the warning box of a subtab instead", Name))
+            end
+
             if typeof(Info.IsNormal) == "boolean" then
                 Tab.WarningBox.IsNormal = Info.IsNormal
             end
@@ -11898,6 +12027,14 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:RefreshSides()
+            if HasSubTabs then
+                if Tab.ActiveSubTab then
+                    Tab.ActiveSubTab:RefreshSides()
+                end
+
+                return
+            end
+
             local Offset = WarningBoxHolder.Visible and WarningBox.Size.Y.Offset + 8 or 0
             for _, Side in Tab.Sides do
                 Side.Position = UDim2.new(Side.Position.X.Scale, 0, 0, Offset)
@@ -12301,7 +12438,13 @@ function Library:CreateWindow(WindowInfo)
             return Tabbox
         end
 
-        Tab.AddTabbox = AddTabbox
+        Tab.AddTabbox = function(self, Info)
+            if HasSubTabs then
+                error(string.format("Tab '%s' uses SubTabs, add tabboxes to a subtab instead", Name))
+            end
+
+            return AddTabbox(self, Info)
+        end
 
         function Tab:AddLeftTabbox(Name)
             return Tab:AddTabbox({ Side = 1, Name = Name })
@@ -12312,6 +12455,10 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:AddGroupbox(Info)
+            if HasSubTabs then
+                error(string.format("Tab '%s' uses SubTabs, add groupboxes to a subtab instead", Name))
+            end
+
             Info = Library:Validate(Info, Templates.Groupbox)
 
             if typeof(Info.Side) == "string" then
@@ -12722,8 +12869,16 @@ function Library:CreateWindow(WindowInfo)
             return Tab:AddGroupbox({ Side = 2, Name = Name, IconName = IconName, Visible = Visible, Collapsed = Collapsed, DisableCollapsing = DisableCollapsing })
         end
 
+        local function IsActive()
+            if ParentTab then
+                return ParentTab.ActiveSubTab == Tab
+            end
+
+            return Library.ActiveTab == Tab
+        end
+
         function Tab:Hover(Hovering)
-            if Library.ActiveTab == Tab then
+            if IsActive() then
                 return
             end
 
@@ -12737,7 +12892,81 @@ function Library:CreateWindow(WindowInfo)
             end
         end
 
-        function Tab:Show()
+        function Tab:UpdateTabInfo()
+            local SubTab = Tab.ActiveSubTab
+            if SubTab then
+                local Title = string.format('<font transparency="0.5">%s /</font> <b>%s</b>', Name, SubTab.Name)
+                Window:ShowTabInfo(Title, SubTab.Description or Description)
+            elseif Description then
+                Window:ShowTabInfo(Name, Description)
+            end
+        end
+
+        local function SetSubButtonActive(Active: boolean)
+            local StrokeTween = TweenService:Create(TabStroke, Library.TweenInfo, {
+                Color = Active and Library.Scheme.AccentColor or Library.Scheme.OutlineColor,
+            })
+
+            local Connection; Connection = StrokeTween.Completed:Connect(function(PlaybackState)
+                Connection:Disconnect()
+                if PlaybackState ~= Enum.PlaybackState.Completed or not Library.Registry[TabStroke] then
+                    return
+                end
+
+                TabStroke.Color = Library.Registry[TabStroke].Color()
+            end)
+            StrokeTween:Play()
+
+            TweenService:Create(TabLabel, Library.TweenInfo, {
+                TextTransparency = Active and 0 or 0.5,
+            }):Play()
+            if TabIcon then
+                TweenService:Create(TabIcon, Library.TweenInfo, {
+                    ImageTransparency = Active and 0 or 0.5,
+                }):Play()
+            end
+        end
+
+        function Tab:Show(KeepParent: boolean?)
+            if ParentTab then
+                if ParentTab.ActiveSubTab == Tab then
+                    if not KeepParent and Library.ActiveTab ~= ParentTab then
+                        ParentTab:Show()
+                    end
+
+                    return
+                end
+
+                local ParentActive = Library.ActiveTab == ParentTab
+                if ParentTab.ActiveSubTab then
+                    ParentTab.ActiveSubTab:Hide()
+                end
+
+                ParentTab.ActiveSubTab = Tab
+                ParentTab.Sides = Tab.Sides
+                SetSubButtonActive(true)
+
+                if ParentActive then
+                    Library:PlayTabAnimation(Tab, true)
+                    Tab:RefreshSides()
+                    ParentTab:UpdateTabInfo()
+
+                    if Library.Searching then
+                        Library:UpdateSearch(Library.SearchText)
+                    end
+                else
+                    TabContainer.Position = UDim2.fromScale(0, 0)
+                    TabContainer.Visible = true
+                    Tab:RefreshSides()
+
+                    if not KeepParent then
+                        ParentTab:Show()
+                    end
+                end
+
+                return
+            end
+
             if Library.ActiveTab == Tab then
                 return
             end
@@ -12763,9 +12992,7 @@ function Library:CreateWindow(WindowInfo)
                 }):Play()
             end
 
-            if Description then
-                Window:ShowTabInfo(Name, Description)
-            end
+            Tab:UpdateTabInfo()
 
             Library:PlayTabAnimation(Tab, true)
             Tab:RefreshSides()
@@ -12778,6 +13005,19 @@ function Library:CreateWindow(WindowInfo)
         end
 
         function Tab:Hide()
+            if ParentTab then
+                SetSubButtonActive(false)
+                Library:PlayTabAnimation(Tab, false)
+
+                ParentTab.PreviousSubTab = Tab
+                if ParentTab.ActiveSubTab == Tab then
+                    ParentTab.ActiveSubTab = nil
+                    ParentTab.Sides = {}
+                end
+
+                return
+            end
+
             TweenService:Create(TabButton, Library.TweenInfo, {
                 BackgroundTransparency = 1,
             }):Play()
@@ -12808,9 +13048,36 @@ function Library:CreateWindow(WindowInfo)
         function Tab:SetVisible(Visible: boolean)
             TabButton.Visible = Visible
 
-            if not Visible and Library.ActiveTab == Tab then
-                Tab:Hide()
+            if Visible or not IsActive() then
+                return
             end
+
+            Tab:Hide()
+
+            if ParentTab then
+                for _, SubTab in ParentTab.SubTabs do
+                    if SubTab ~= Tab and SubTab.Button.Visible then
+                        SubTab:Show()
+                        break
+                    end
+                end
+            end
+        end
+
+        function Tab:AddSubTab(...)
+            if not HasSubTabs then
+                error(string.format("Tab '%s' was not created with SubTabs = true", Name))
+            end
+
+            local SubTab = CreateTab(Tab, ...)
+            Tab.SubTabCount += 1
+            table.insert(Tab.SubTabs, SubTab)
+
+            if not Tab.ActiveSubTab then
+                SubTab:Show(true)
+            end
+
+            return SubTab
         end
 
         function Tab:SetOrder(NewOrder: number)
@@ -12865,6 +13132,35 @@ function Library:CreateWindow(WindowInfo)
                 end
             end
 
+            for Index = #Tab.SubTabs, 1, -1 do
+                local SubTab = Tab.SubTabs[Index]
+                if SubTab and not SubTab.Destroyed then
+                    SubTab:Destroy()
+                end
+            end
+            table.clear(Tab.SubTabs)
+
+            if ParentTab then
+                local SubIndex = table.find(ParentTab.SubTabs, Tab)
+                if SubIndex then
+                    table.remove(ParentTab.SubTabs, SubIndex)
+                end
+
+                if ParentTab.ActiveSubTab == Tab then
+                    ParentTab.ActiveSubTab = nil
+                    ParentTab.Sides = {}
+
+                    local NextSubTab = ParentTab.SubTabs[1]
+                    if NextSubTab then
+                        NextSubTab:Show(true)
+                    end
+
+                    if Library.ActiveTab == ParentTab then
+                        ParentTab:UpdateTabInfo()
+                    end
+                end
+            end
+
             if TabContainer then
                 TabContainer:Destroy()
             end
@@ -12880,14 +13176,14 @@ function Library:CreateWindow(WindowInfo)
                 TabButton:Destroy()
             end
 
-            Library.Tabs[Name] = nil
+            Library.Tabs[TabKey] = nil
         end
 
         if typeof(Tooltip) == "string" then
             Tab.TooltipTable = Library:AddTooltip(Tooltip, nil, TabButton)
         end
 
-        if not Library.ActiveTab then
+        if not ParentTab and not Library.ActiveTab then
             Tab:Show()
         end
 
@@ -12897,11 +13193,17 @@ function Library:CreateWindow(WindowInfo)
         TabButton.MouseLeave:Connect(function()
             Tab:Hover(false)
         end)
-        TabButton.MouseButton1Click:Connect(Tab.Show)
+        TabButton.MouseButton1Click:Connect(function()
+            Tab:Show()
+        end)
 
-        Library.Tabs[Name] = Tab
+        Library.Tabs[TabKey] = Tab
 
         return Tab
+    end
+
+    function Window:AddTab(...)
+        return CreateTab(nil, ...)
     end
 
     function Window:AddKeyTab(...)
@@ -14078,6 +14380,7 @@ function Library:CreateWindow(WindowInfo)
     end))
 
     Window.MainFrame = MainFrame
+    Window.BackgroundImage = BackgroundImage
     Library.Window = Window
 
     return Window
@@ -16054,6 +16357,12 @@ function ThemeManager:CreateThemeManager(Themesbox: any)
     end)
 
     ThemeManager:LoadDefault()
+
+    -- open with the "Moon" background preset unless a saved theme already set an image
+    if BackgroundImage.Value == nil or BackgroundImage.Value == "" then
+        BackgroundImage:SetValue(BackgroundPresets["Moon"])
+    end
+
     ThemeManager:UpdateContrastWarning()
     ThemeManager.AppliedToTab = true
     RefreshDefaultThemeLabel()
@@ -17616,6 +17925,14 @@ do
 							InputLgDelay = 0.05,
 							GucciType = "CreatureBlobman",
 							AKType = "Shuriken",
+							StreamerScope = "only You",
+							StreamerNickname = "redacted",
+							AKOffsetX = 0,
+							AKOffsetY = -0.3,
+							AKOffsetZ = 0,
+							AKRotX = 90,
+							AKRotY = 0,
+							AKRotZ = 0,
 							AntiInputType = "FoodHamburger",
 							FasterEscape = 3,
 							AGType = "Normal",
@@ -19556,6 +19873,52 @@ end)
 							return (format(str6, displayName, str7, v24.Name))
 						end
 
+						local baseFormatPlayer = tbl12.FormatPlayer
+						local streamerNameCache = setmetatable({}, { __mode = "k" })
+						local streamerNameCount = 0
+
+						local function streamerTargetActive(target)
+							if not target or not toggles or not toggles.StreamerMode or not toggles.StreamerMode.Value then
+								return false
+							end
+
+							if tbl9.StreamerScope == "only You" then
+								return target == localPlayer
+							end
+
+							return true
+						end
+
+						tbl12.FormatPlayer = function(arg, arg2, arg3)
+							local target
+
+							if type(arg) ~= "string" then
+								target = arg
+							else
+								target = Players:FindFirstChild(arg)
+							end
+
+							if streamerTargetActive(target) then
+								local streamerName = streamerNameCache[target]
+
+								if not streamerName then
+									streamerNameCount += 1
+									local streamerNick = tbl9.StreamerNickname
+
+									if streamerNick == nil or streamerNick == "" then
+										streamerNick = "redacted"
+									end
+
+									streamerName = streamerNick .. streamerNameCount
+									streamerNameCache[target] = streamerName
+								end
+
+								return ("%s%s (@%s)"):format(streamerName, arg2 and "\n" or "", streamerName)
+							end
+
+							return baseFormatPlayer(arg, arg2, arg3)
+						end
+
 						tbl12.PacketHandler = function(arg, arg2, arg3)
 							if arg == localPlayer then
 								return
@@ -20803,6 +21166,7 @@ end
 						return humanoid.Value
 					end
 				end
+
 
 				tbl12.RemoveSticky = function(arg, arg2)
 					if not arg or not arg.Parent then
@@ -29424,6 +29788,26 @@ end
 				end
 			end
 
+			tbl12.ResolveDesync = function(arg)
+				local value22, value23, value24 = tbl12.Char(arg)
+
+				if arg == localPlayer or tbl12.IsProtectedPlayer(arg) then
+					return
+				end
+
+				if not (value22 and value23 and value24 and value24.Health ~= 0 and tbl12.GetMagnitude(workspace.SpawnLocation, value23) < 15000) then
+					return
+				end
+
+				if not tbl12.IsPartOwner(value23) and not tbl12.SNO(value23) then
+					return false
+				end
+
+				tbl12.ResetVelocity(value23)
+				task.delay(0.35, tbl12.RNO, value23)
+				return value23.Parent ~= nil
+			end
+
 			tbl12.EatAntiInput = function(arg)
 				local v22 = tbl12.Char(arg)
 
@@ -31485,12 +31869,16 @@ end
 			end
 		end)
 
-		tbl12.CreatePlayerDropdown = function(arg, arg2, arg3, arg4, arg5, arg6, arg7)
+		tbl12.CreatePlayerDropdown = function(arg, arg2, arg3, arg4, arg5, arg6, arg7, allowProtected)
 			if not arg or not arg3 then
 				fn18("Something went wrong, tell the owner about this notification.")
 				return
 			end
 			local flag12 = arg5 ~= false
+			-- allowProtected = true: Whitelist/Immunity listeleri icin admin filtresini kapatir
+			local function isBlocked(p)
+				return allowProtected ~= true and tbl12.IsProtectedPlayer(p)
+			end
 			local flag13 = arg4 ~= false
 			local tbl16 = { Dropdown = nil, Values = arg3, Selected = {}, Index = arg2, Multi = flag13 }
 
@@ -31510,11 +31898,11 @@ end
 
 					if flag13 then
 						for k, v22 in pairs(arg8) do
-							if not tbl12.IsProtectedPlayer(k) then
+							if not isBlocked(k) then
 								arg3[k] = v22
 							end
 						end
-					elseif arg8 and not tbl12.IsProtectedPlayer(arg8) then
+					elseif arg8 and not isBlocked(arg8) then
 						arg3[arg8] = true
 					end
 
@@ -31522,11 +31910,11 @@ end
 
 					if flag13 then
 						for k, v22 in pairs(arg8) do
-							if not tbl12.IsProtectedPlayer(k) then
+							if not isBlocked(k) then
 								tbl16.Selected[k] = v22
 							end
 						end
-					elseif arg8 and not tbl12.IsProtectedPlayer(arg8) then
+					elseif arg8 and not isBlocked(arg8) then
 						tbl16.Selected[arg8] = true
 					end
 
@@ -31540,7 +31928,7 @@ end
 			table.insert(tbl7.PlayerDropdowns, tbl16)
 
 			local function fn21(arg8)
-				if tbl12.IsProtectedPlayer(arg8) then
+				if isBlocked(arg8) then
 					return fn18("This player has Moon immunity.")
 				end
 
@@ -31682,6 +32070,10 @@ end
 
 			if targetMethods["Remove Invisibility"] and v23 then
 				v23.Massless = false
+			end
+
+			if targetMethods["Resolve Desync"] then
+				fn21("Resolve Desync", tbl12.ResolveDesync)
 			end
 
 			if targetMethods.Bring then
@@ -32637,7 +33029,7 @@ Part you are touching: %*]]):format(parent2.Name, str7, part1.Name)
 Name: %*
 Spawned Toys: %*
 Gamepasses: %*
-Escape Timer: %*]]
+Escape Timer: %* ]]
 
 										local format = str7.format
 										local v24 = name
@@ -33243,14 +33635,46 @@ Escape Timer: %*]]
 				until flag11 or not tbl8.AntiKick or os.clock() >= n36
 			end
 
+			local AK_TOY_NAMES = {
+				Shuriken = "NinjaShuriken",
+				Katana = "NinjaKatana",
+				Kunai = "NinjaKunai",
+				Cleaver = "ToolCleaver",
+				["Rusty Fork"] = "ToolDiggingForkRusty",
+				Pencil = "ToolPencil",
+				Pickaxe = "ToolPickaxe",
+			}
+
 			local function fn22(arg)
-				local NinjaShuriken = tbl12.SpawnToy("NinjaShuriken", arg.CFrame + Vector3.new(0, 15, 0), 3, true)
-				local stickyPart = NinjaShuriken and NinjaShuriken:WaitForChild("StickyPart", 1.5)
+				local akType = tbl9.AKType
+				local toyName = AK_TOY_NAMES[akType] or "NinjaShuriken"
+				local toy = tbl12.SpawnToy(toyName, arg.CFrame + Vector3.new(0, 15, 0), 3, true)
+				local stickyPart = toy and toy:WaitForChild("StickyPart", 1.5)
 				local stickyWeld = stickyPart and stickyPart:WaitForChild("StickyWeld", 1.5)
+
 				if stickyPart and stickyWeld and tbl12.SNO(stickyPart) then
-					return NinjaShuriken, stickyPart, stickyWeld
+					toy:SetAttribute("AKToyType", akType)
+					return toy, stickyPart, stickyWeld
 				end
-				tbl12.DestroyToy(NinjaShuriken)
+
+				if toy then
+					tbl12.DestroyToy(toy)
+				end
+
+				if toy and toyName ~= "NinjaShuriken" then
+					local shuriken = tbl12.SpawnToy("NinjaShuriken", arg.CFrame + Vector3.new(0, 15, 0), 3, true)
+					local sPart = shuriken and shuriken:WaitForChild("StickyPart", 1.5)
+					local sWeld = sPart and sPart:WaitForChild("StickyWeld", 1.5)
+
+					if sPart and sWeld and tbl12.SNO(sPart) then
+						shuriken:SetAttribute("AKToyType", akType)
+						return shuriken, sPart, sWeld
+					end
+
+					if shuriken then
+						tbl12.DestroyToy(shuriken)
+					end
+				end
 			end
 
 			task.spawn(function()
@@ -33285,8 +33709,13 @@ Escape Timer: %*]]
 							end
 						end
 
-						if tbl9.AKType == "Shuriken" then
+						if tbl9.AKType ~= nil then
 							local parent2, shurHighlight, highlight2, antiKick, forcefieldChar, transparency, isMeshPart
+
+							if v18 and v18.Parent and v18:GetAttribute("AKToyType") ~= tbl9.AKType then
+								tbl12.DestroyToy(v18)
+								v18 = nil
+							end
 
 							if not (v18 and v18.Name == "ShurikenRSC" and v18:FindFirstChild("StickyPart") and v18.StickyPart:FindFirstChild("StickyWeld") and v18.StickyPart.StickyWeld.Part1 == ragdollTouchedHitbox) then
 								local stickyPart = nil
@@ -33320,7 +33749,7 @@ Escape Timer: %*]]
 												end
 											end)
 
-											tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+											tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 											now3 = tick()
 
 											while true do
@@ -33419,7 +33848,7 @@ Escape Timer: %*]]
 											end
 										end)
 
-										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 										now3 = tick()
 
 										while true do
@@ -33525,7 +33954,7 @@ Escape Timer: %*]]
 											end
 										end)
 
-										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(0, -0.3, 0) * CFrame.Angles(1.5707963267948966, 0, 0))
+										tbl11.StickyPartEvent:FireServer(stickyPart, ragdollTouchedHitbox, CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ)))
 										now3 = tick()
 
 										while true do
@@ -35026,12 +35455,12 @@ Escape Timer: %*]]
 
 											kickAP = Instance.new("BodyPosition")
 											local bodyGyro = Instance.new("BodyGyro")
-											kickAP.D = 200
+											kickAP.D = DelayValue
 											kickAP.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 											kickAP.Position = v29
 											kickAP.Parent = v27
 											bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-											bodyGyro.D = 200
+											bodyGyro.D = DelayValue
 											bodyGyro.CFrame = CFrame.new()
 											bodyGyro.Parent = v27
 											kickAP.Name = "KickAP"
@@ -35061,6 +35490,7 @@ Escape Timer: %*]]
 											if tbl8.RagdollInNK then
 												task.spawn(tbl12.Ragdoll, v26)
 											end
+
 
 											if tbl8.DeleteShurInNK then
 												task.spawn(tbl12.RemoveSticky, v26)
@@ -35225,25 +35655,25 @@ Escape Timer: %*]]
 				task.wait(1)
 			end
 		end)
-
-		tbl15 = {
-			Home = v19:AddTab("<b>Home</b>", "house", "Profile, statistics"),
-			Player = v19:AddTab("<b>Player</b>", "person-standing", "Things you can apply to yourself"),
-			Combat = v19:AddTab("<b>Combat</b>", "hand", "Grab/Line/Auras stuff"),
-			Invincibility = v19:AddTab("<b>Invincibility</b>", "shield", "Defense"),
-			Target = v19:AddTab("<b>Target</b>", "crosshair", "Single/multiple target actions"),
-			Blobman = v19:AddTab("<b>Blobman</b>", "venetian-mask", "Single/multiple Blobman target actions"),
-			Toys = v19:AddTab("<b>Toys</b>", "shapes", "Actions you can do with Toys"),
-			Visual = v19:AddTab("<b>Visual</b>", "eye", "Stuff only you can see"),
-			AutoClicker = v19:AddTab("<b>Auto-Clicker</b>", "mouse-pointer-click", "Make figures out of players"),
-			Keybinds = v19:AddTab("<b>Keybinds</b>", "keyboard", "Keybinds you can press for specific action"),
-			Misc = v19:AddTab("<b>Misc</b>", "funnel", "Other things"),
-			Lists = v19:AddTab("<b>Lists</b>", "scroll-text", "Miscellaneous useful dropdowns"),
-			Settings = v19:AddTab("<b>Settings</b>", "settings", "GUI Settings"),
-		}
+                
+tbl15 = {
+    Home = v19:AddTab("<b>Home</b>", "house", "Profile, statistics", true),
+    Player = v19:AddTab({ Name = "<b>Player</b>", Icon = "person-standing", Description = "Things you can apply to yourself", SubTabs = true }),
+    Combat = v19:AddTab("<b>Combat</b>", "hand", "Grab/Line/Auras stuff", true),
+    Invincibility = v19:AddTab({ Name = "<b>Invincibility</b>", Icon = "shield", Description = "Defense", SubTabs = true }),
+    Target = v19:AddTab({ Name = "<b>Target</b>", Icon = "crosshair", Description = "Single/multiple target actions", SubTabs = true }),
+    Toys = v19:AddTab("<b>Toys</b>", "shapes", "Actions you can do with Toys", true),
+    Visual = v19:AddTab({ Name = "<b>Visual</b>", Icon = "eye", Description = "Stuff only you can see", SubTabs = true }),
+    AutoClicker = v19:AddTab("<b>Auto-Clicker</b>", "mouse-pointer-click", "Make figures out of players", true),
+    Keybinds = v19:AddTab("<b>Keybinds</b>", "keyboard", "Keybinds you can press for specific action", true),
+    Misc = v19:AddTab("<b>Misc</b>", "funnel", "Other things", true),
+    Lists = v19:AddTab({ Name = "<b>Lists</b>", Icon = "scroll-text", Description = "Miscellaneous useful dropdowns and scripts", SubTabs = true }),
+    Settings = v19:AddTab({ Name = "<b>Settings</b>", Icon = "settings", Description = "GUI Settings", SubTabs = true }),
+}
 
 	do
-		local Greetings = tbl15.Home:AddLeftGroupbox("Greetings", "chess-queen")
+        local Greetings = tbl15.Home:AddLeftGroupbox("Greetings", "chess-queen")
+
 		local thumbnail = string.format("rbxthumb://type=AvatarBust&id=%d&w=180&h=180", localPlayer.UserId)
 		local avatar = Greetings:AddImage("MyIcon", {
 			Image = thumbnail,
@@ -35292,13 +35722,31 @@ Escape Timer: %*]]
 			greeting = "Evening"
 		end
 		Greetings:AddLabel({ Text = ("%s, <b>%s</b> "):format(greeting, localPlayer.DisplayName), DoesWrap = true })
+
+		local quickVisuals = Greetings:AddButton({
+			Text = "Visuals",
+			Tooltip = "Quickly jump to the Visuals tab",
+			Func = function()
+				tbl15.Visual:Show()
+			end,
+		})
+
+		quickVisuals:AddButton({
+			Text = "Settings",
+			Tooltip = "Quickly jump to the Settings tab",
+			Func = function()
+				tbl15.Settings:Show()
+			end,
+		})
 		Greetings:AddDivider()
 		Greetings:AddLabel({ Text = "Welcome to <b><font color=\"#eae6ff\">Moon</font></b>", DoesWrap = true })
 		Greetings:AddLabel({ Text = "Thanks for liking anime girls!!!<b>they will be by your side throughout your life</b>", DoesWrap = true })
         Greetings:AddDivider()
 		Greetings:AddLabel(string.format("<font color='#94A3B8'>Account Age</font>  <b>%d days</b>", localPlayer.AccountAge))
 		Greetings:AddLabel(string.format("<font color='#94A3B8'>User ID</font>  <b>%d</b>", localPlayer.UserId))
+
 	end
+
 
 		do
 			local Statistics = tbl15.Home:AddRightGroupbox("Statistics", "chart-no-axes-combined")
@@ -35389,7 +35837,7 @@ Escape Timer: %*]]
 		Script = tbl15.Home:AddGroupbox({
             Side = 'Left',
             Name = '<b>Script</b>',
-            Description = '<b>Server hop,ServerCrash,Scripts</b>',
+            Description = '<b>Server hop,Scripts,Streamer Mode</b>',
             IconName = 'monitor',
             PopOut = true,
         })
@@ -35397,9 +35845,49 @@ Escape Timer: %*]]
             Side = 'Left',
             Name = 'Options',
         })
-        ServerCr = ScriptDisplayTabbox:AddTab('<b>Server Crash</b>')
         Scripts = ScriptDisplayTabbox:AddTab('<b>Script</b>')
         ServerHop = ScriptDisplayTabbox:AddTab('<b>Server-Hop</b>')
+        stmrmod = ScriptDisplayTabbox:AddTab('<b>Streamer-Mod</b>')
+
+        
+
+		stmrmod:AddToggle("StreamerMode", {
+			Text = "Disabled",
+			Default = false,
+			Tooltip = "Hides player names with generic replacements",
+			Callback = function(streamerMode)
+				if toggles.StreamerMode and toggles.StreamerMode.SetText then
+					toggles.StreamerMode:SetText(streamerMode and "Enabled" or "Disabled")
+				end
+			end,
+		})
+
+		stmrmod:AddDropdown("StreamerScope", {
+			Values = { "only You", "Everyone" },
+			ValueImages = {
+				["only You"] = "user",
+				["Everyone"] = "users",
+			},
+			Default = "only You",
+			Multi = false,
+			Text = "Affects",
+			Callback = function(streamerScope)
+				tbl9.StreamerScope = streamerScope
+			end,
+		})
+
+		stmrmod:AddInput("StreamerNickname", {
+			Default = "redacted",
+			Numeric = false,
+			Finished = true,
+			Placeholder = "redacted",
+			Text = "Nickname",
+			Tooltip = "What player names get replaced with",
+			Callback = function(streamerNickname)
+				tbl9.StreamerNickname = streamerNickname
+			end,
+		})
+	
 
 			Scripts:AddButton({
 				Text = "Unload Script",
@@ -35430,24 +35918,6 @@ Escape Timer: %*]]
 			})
 
             
-        ServerCr:AddButton({
-        Text = 'Server Shutdown',
-        Tooltip = "Shuts down the server",
-        Func = function()
-            task.spawn(function()
-                local ok, err = pcall(function()
-                    loadstring(game:HttpGet('https://raw.githubusercontent.com/LovelyHub-Cranel/LovelyHub/refs/heads/main/servercrash'))()
-                end)
-
-                Library:Notify({
-                    Title = 'Moon',
-                    Description = 'Server Shutdown Started',
-                    Time = 3,
-                    BigIcon = "rbxassetid://92788301326379",
-                })
-            end)
-        end,
-    })
 			
 
 			Scripts:AddToggle("AutoRj", {
@@ -35569,6 +36039,7 @@ Escape Timer: %*]]
 		end
         
 
+	local Chrc12, Tlp1 -- scope fix: used after the do-block below closes
 		do
 
             local Live = tbl15.Home:AddGroupbox({
@@ -35661,8 +36132,11 @@ Escape Timer: %*]]
 				end
 			end)
 		
+        Chrc12 = tbl15.Player:AddSubTab("Character", "user")
 
-			local Values = tbl15.Player:AddLeftGroupbox("Values", "user")
+        Tlp1 = tbl15.Player:AddSubTab("Tp", "sparkles")
+
+			local Values = Chrc12:AddRightGroupbox("Values", "user")
 
 			Values:AddSlider("WalkspeedS", {
 				Text = "Walk Speed",
@@ -35706,7 +36180,7 @@ Escape Timer: %*]]
 		end
 
 		do
-			local Character = tbl15.Player:AddLeftGroupbox("Character", "badge")
+			local Character = Chrc12:AddLeftGroupbox("Character", "badge")
 
 			Character:AddToggle("FlyT", {
 				Text = "Flight",
@@ -35850,10 +36324,9 @@ Escape Timer: %*]]
 
 local playBangActive = false
 local bangAnimTrack = nil
-local bangAnimId = "rbxassetid://148840371" -- Bang из Infinite Yield
-local bangSpeed = 10-- 🔥 СКОРОСТЬ (1 = нормально, 0.3–0.5 медленно)
+local bangAnimId = "rbxassetid://148840371" 
+local bangSpeed = 12
 
--- ▶ запуск анимации
 local function startBang()
 	local plr = Players.LocalPlayer
 	local char = plr.Character or plr.CharacterAdded:Wait()
@@ -35871,7 +36344,7 @@ local function startBang()
 	bangAnimTrack = animator:LoadAnimation(anim)
 	bangAnimTrack.Priority = Enum.AnimationPriority.Action
 	bangAnimTrack:Play()
-	bangAnimTrack:AdjustSpeed(bangSpeed) -- 🐢 замедление
+	bangAnimTrack:AdjustSpeed(bangSpeed)
 
     -- Infinite Yield loop
 	task.spawn(function()
@@ -35884,7 +36357,7 @@ local function startBang()
 	end)
 end
 
--- ⏹ остановка
+
 local function stopBang()
 	if bangAnimTrack then
 		bangAnimTrack:Stop()
@@ -35892,7 +36365,7 @@ local function stopBang()
 	end
 end
 
--- 🔘 Toggle
+
 Character:AddToggle("BangToggle", {
 	Text = "Bang (Slow)",
 	Default = false,
@@ -35928,7 +36401,7 @@ Character:AddToggle("BangToggle", {
 		end
 
 		do
-			local Teleporting = tbl15.Player:AddRightGroupbox("Teleporting", "house")
+			local Teleporting = Tlp1:AddLeftGroupbox("Teleporting", "house")
 
 			Teleporting:AddDropdown("TeleportToDropdown", {
 				Values = tbl7.TeleportLocations,
@@ -36329,10 +36802,11 @@ Teleporting:AddToggle("MiniMap", {
         end
     end,
 })
+
 		end
         
 		do
-			local Players2 = tbl15.Player:AddRightGroupbox("Players", "users")
+			local Players2 = Tlp1:AddRightGroupbox("Players", "users")
 			tbl12.CreatePlayerDropdown(Players2, "TeleportTargets", tbl7.SelectedTeleportPlayers, false, false)
 
 			Players2:AddToggle("LoopSpectatePlayer", {
@@ -36378,7 +36852,7 @@ Teleporting:AddToggle("MiniMap", {
 		end
 
 		do
-			local v22 = tbl15.Player:AddRightGroupbox("Look Event Figures", "person-standing")
+			local v22 = Chrc12:AddRightGroupbox("Look Event Figures", "person-standing")
 
 			v22:AddDropdown("LookFigure", {
 				Text = "Figure",
@@ -36410,7 +36884,7 @@ Teleporting:AddToggle("MiniMap", {
 		end
 
 		do
-			local Animations = tbl15.Player:AddRightGroupbox("Animations", "audio-lines")
+			local Animations = Chrc12:AddRightGroupbox("Animations", "audio-lines")
 
 			local tbl16 = {
 				Struggle = "rbxassetid://7047322890",
@@ -36999,8 +37473,12 @@ Teleporting:AddToggle("MiniMap", {
 		})
 	end
 
+	local DefMain = tbl15.Invincibility:AddSubTab("Defense", "brick-wall-shield")
+	local DefSet = tbl15.Invincibility:AddSubTab("Setting", "setting")
+	
+
 	do
-		local Antis = tbl15.Invincibility:AddLeftGroupbox("Antis", "brick-wall-shield")
+		local Antis = DefMain:AddLeftGroupbox("Antis", "brick-wall-shield")
 
 		Antis:AddToggle("AntiGrab", {
 			Text = "Anti Grab",
@@ -37131,6 +37609,36 @@ Teleporting:AddToggle("MiniMap", {
 								end
 							end
 						end
+					end
+				end)
+			end,
+		})
+        Antis:AddToggle("AntiStickyExploit", {
+			Text = "Anti Sticky-Exploit",
+			Default = false,
+			Tooltip = "Destroys sticky parts that get welded onto you (anti sticky lag)",
+			Callback = function(arg)
+				featureState.AntiStickyExploit = arg
+
+				if arg and featureState.AntiSticky then
+					toggles.AntiSticky:SetValue(false)
+				end
+
+				toggles.AntiSticky:SetDisabled(arg)
+
+				task.spawn(function()
+					while featureState.AntiStickyExploit and task.wait(0.1) do
+						local value20 = tbl12.Char()
+
+						if value20 then
+							for _, value21 in pairs(value20:QueryDescendants("BasePart")) do
+								for _, value22 in pairs(value21:GetConnectedParts()) do
+									if value22.Name == "StickyPart" and value22.Parent and not value22:IsDescendantOf(value20) and not value22:IsDescendantOf(workspace.PlotItems) then
+										value22:Destroy()
+										end
+									end
+								end
+							end
 					end
 				end)
 			end,
@@ -37463,7 +37971,7 @@ Antis:AddToggle("HouseTP", {
 	end
 
 	do
-		local Miscellaneous = tbl15.Invincibility:AddRightGroupbox("Miscellaneous", "bolt")
+		local Miscellaneous = DefMain:AddRightGroupbox("Miscellaneous", "bolt")
 
 		Miscellaneous:AddToggle("DisblVoid", {
 			Text = "Disable Void",
@@ -37846,7 +38354,7 @@ Miscellaneous:AddToggle("AntiVoid", {
 	tbl12.UpdateLastGrabbedLabel()
 
 	do
-		local v20 = tbl15.Invincibility:AddLeftGroupbox("Counter-attack", "airplay")
+		local v20 = DefMain:AddRightGroupbox("Counter-attack", "airplay")
 
 		v20:AddDropdown("CADropdown", {
 			Values = { "Grab", "Kill", "Void", "Delete Limbs", "Fling", "Teleport to Spawn", "Anchor" },
@@ -37887,47 +38395,286 @@ Miscellaneous:AddToggle("AntiVoid", {
 
 	do
 
- local Config = tbl15.Invincibility:AddRightGroupbox("Config", "settings")
+local AutoRes = DefSet:AddRightGroupbox("Auto Reset", "refresh")
+local AntiG   = DefSet:AddLeftGroupbox("AntiGrab-Set", "shield")
 
+local Antik = DefSet:AddGroupbox({
+            Side = 'Left',
+            Name = '<b>AntiKick-Set</b>',
+            Description = '<b>Anti Kick Settings</b>',
+            IconName = 'lock',
+            PopOut = true,
+        })
+        ScriptDisplayTabbox = Antik:AddTabbox({
+            Side = 'Left',
+            Name = 'Options',
+        })
+        AntiK = ScriptDisplayTabbox:AddTab('<b>AntiKick-Set</b>')
+       AKickSet = ScriptDisplayTabbox:AddTab('<b>Setting</b>')
 
+local AntiOw  = DefSet:AddRightGroupbox("AntiNetwork-Set", "wifi")
+local Antilg  = DefSet:AddRightGroupbox("AntiLag-Set", "cpu")
 
-local AutoRes = tbl15.Invincibility:AddRightGroupbox("Auto Reset", "refresh")
-local AntiG   = tbl15.Invincibility:AddRightGroupbox("AntiGrab-Set", "shield")
-local AntiK   = tbl15.Invincibility:AddRightGroupbox("AntiKick-Set", "lock")
-local AntiOw  = tbl15.Invincibility:AddRightGroupbox("AntiNetwork-Set", "wifi")
-local Antilg  = tbl15.Invincibility:AddRightGroupbox("AntiLag-Set", "cpu")
+AntiK:AddDropdown("AKToy", {
+	Values = { "Shuriken", "Katana", "Kunai", "Cleaver", "Rusty Fork", "Pencil", "Pickaxe", "Any Sticky Toy" },
+	Default = "Shuriken",
+	Multi = false,
+	Text = "Toy",
+	Tooltip = "Which kind of toy anchors you while Anti Kick is running",
+	Callback = function(akToy)
+		tbl9.AKType = akToy == "Any Sticky Toy" and "Any" or akToy
+	end,
+})
 
-
-local function HideAll()
-    if AutoRes then AutoRes:Hide() end
-    if AntiG then AntiG:Hide() end
-    if AntiK then AntiK:Hide() end
-    if AntiOw then AntiOw:Hide() end
-    if Antilg then Antilg:Hide() end
+do
+local AKNotify = function(msg)
+	pcall(function() lib:Notify(msg) end)
 end
 
-Config:AddDropdown("ConfigCategory", {
-    Values = { "Auto Reset", "AntiGrab-Set", "AntiKick-Set", "AntiNetwork-Set", "AntiLag-Set" },
-    Default = 1,
-    Multi = false,
-    Text = "Category",
-    Callback = function(v)
-        HideAll()
-        if v == "Auto Reset" then
-            if AutoRes then AutoRes:Show() end
-        elseif v == "AntiGrab-Set" then
-            if AntiG then AntiG:Show() end
-        elseif v == "AntiKick-Set" then
-            if AntiK then AntiK:Show() end
-        elseif v == "AntiNetwork-Set" then
-            if AntiOw then AntiOw:Show() end
-        elseif v == "AntiLag-Set" then
-            if Antilg then Antilg:Show() end
-        end
-    end,
+local applyAntiKickOffsets = function()
+	local character, root, humanoid = tbl12.Char()
+
+	if not (character and humanoid and humanoid.Health > 0) then
+		return
+	end
+
+	local hitbox = character:FindFirstChild("RagdollTouchedHitbox")
+
+	if not hitbox then
+		return
+	end
+
+	local cframe = CFrame.new(tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ) * CFrame.Angles(math.rad(tbl9.AKRotX), math.rad(tbl9.AKRotY), math.rad(tbl9.AKRotZ))
+
+	for _, part in ipairs(character:GetChildren()) do
+		if part:IsA("BasePart") then
+			for _, connected in ipairs(part:GetConnectedParts()) do
+				local weld = connected:FindFirstChild("StickyWeld")
+
+				if weld and weld.Part1 == hitbox then
+					tbl11.StickyPartEvent:FireServer(connected, hitbox, cframe)
+				end
+			end
+		end
+	end
+end
+
+local setAKPosition = function(x, y, z, rx, ry, rz)
+	tbl9.AKOffsetX, tbl9.AKOffsetY, tbl9.AKOffsetZ = x, y, z
+	tbl9.AKRotX, tbl9.AKRotY, tbl9.AKRotZ = rx, ry, rz
+
+	if options.AKOffsetXS then options.AKOffsetXS:SetValue(x) end
+	if options.AKOffsetYS then options.AKOffsetYS:SetValue(y) end
+	if options.AKOffsetZS then options.AKOffsetZS:SetValue(z) end
+	if options.AKRotXS then options.AKRotXS:SetValue(rx) end
+	if options.AKRotYS then options.AKRotYS:SetValue(ry) end
+	if options.AKRotZS then options.AKRotZS:SetValue(rz) end
+
+	if tbl8.AntiKick then
+		applyAntiKickOffsets()
+	end
+end
+AKickSet:AddDivider("Toy Setting")
+
+AKickSet:AddSlider("AKOffsetXS", {
+	Text = "Offset X",
+	Default = 0,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetX = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
 })
-HideAll()
-if AutoRes then AutoRes:Show() end
+
+AKickSet:AddSlider("AKOffsetYS", {
+	Text = "Offset Y",
+	Default = -0.3,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetY = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKOffsetZS", {
+	Text = "Offset Z",
+	Default = 0,
+	Min = -2,
+	Max = 2,
+	Rounding = 1,
+	Compact = true,
+	Callback = function(v)
+		tbl9.AKOffsetZ = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotXS", {
+	Text = "Rotation X",
+	Default = 90,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotX = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotYS", {
+	Text = "Rotation Y",
+	Default = 0,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotY = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddSlider("AKRotZS", {
+	Text = "Rotation Z",
+	Default = 0,
+	Min = 0,
+	Max = 360,
+	Rounding = 0,
+	Compact = true,
+	Suffix = " deg",
+	Callback = function(v)
+		tbl9.AKRotZ = v
+		if tbl8.AntiKick then applyAntiKickOffsets() end
+	end,
+})
+
+AKickSet:AddDivider()
+
+AKickSet:AddDropdown("AKPreset", {
+	Values = { "Pickaxe on Back", "Head Katana", "Ass Shuriken", "Belt Kunai", "Pencil Penis" },
+	Default = nil,
+	Multi = false,
+	Text = "Preset",
+	Callback = function(akPreset)
+		tbl9.AKPresetChoice = akPreset
+	end,
+})
+
+AKickSet:AddButton({
+	Text = "Load Preset",
+	Func = function()
+		local akPreset = tbl9.AKPresetChoice or (options.AKPreset and options.AKPreset.Value)
+
+		local akPresets = {
+			["Pickaxe on Back"] = { 0, 0.2, 1.1, 45, 0, 180 },
+			["Head Katana"] = { 0, 1.6, 0, 45, 0, 0 },
+			["Ass Shuriken"] = { 0, 0.4, -1, 90, 0, 0 },
+			["Belt Kunai"] = { 1.2, 0.2, 0, 0, 0, 90 },
+			["Pencil Penis"] = { 0, -0.4, 0.9, 0, 90, 0 },
+		}
+		local preset = akPresets[akPreset]
+
+		if not preset then
+			return AKNotify("Select a preset first!")
+		end
+
+		setAKPosition(preset[1], preset[2], preset[3], preset[4], preset[5], preset[6])
+	end,
+})
+
+AKickSet:AddInput("AKCustomPresetName", {
+	Text = "Custom Preset Name",
+	ClearTextOnFocus = false,
+	Callback = function() end,
+})
+
+AKickSet:AddButton({
+	Text = "Save Custom Preset",
+	Func = function()
+		local presetName = options.AKCustomPresetName and options.AKCustomPresetName.Value or ""
+
+		if presetName == "" then
+			return AKNotify("Enter a preset name first!")
+		end
+
+		if not (writefile and makefolder and isfolder) then
+			return AKNotify("Your executor does not support filesystem presets.")
+		end
+
+		local ok = pcall(function()
+			if not isfolder("Resonance") then
+				makefolder("Resonance")
+			end
+
+			if not isfolder("Resonance/AntiKickPresets") then
+				makefolder("Resonance/AntiKickPresets")
+			end
+
+			writefile("Resonance/AntiKickPresets/" .. presetName .. ".json", game:GetService("HttpService"):JSONEncode({
+				X = tbl9.AKOffsetX,
+				Y = tbl9.AKOffsetY,
+				Z = tbl9.AKOffsetZ,
+				RotX = tbl9.AKRotX,
+				RotY = tbl9.AKRotY,
+				RotZ = tbl9.AKRotZ,
+			}))
+		end)
+
+		AKNotify(ok and ("Preset saved: " .. presetName) or "Couldn't write the preset file.")
+	end,
+})
+
+AKickSet:AddButton({
+	Text = "Load Custom Preset",
+	Func = function()
+		local presetName = options.AKCustomPresetName and options.AKCustomPresetName.Value or ""
+
+		if presetName == "" then
+			return AKNotify("Enter a preset name first!")
+		end
+
+		if not (readfile and isfile) then
+			return AKNotify("Your executor does not support filesystem presets.")
+		end
+
+		local path = "Resonance/AntiKickPresets/" .. presetName .. ".json"
+
+		if not isfile(path) then
+			return AKNotify("Preset not found: " .. presetName)
+		end
+
+		local ok, result = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(readfile(path))
+		end)
+
+		if not ok or type(result) ~= "table" then
+			return AKNotify("Couldn't read the preset file.")
+		end
+
+		setAKPosition(
+			tonumber(result.X) or 0,
+			tonumber(result.Y) or -0.3,
+			tonumber(result.Z) or 0,
+			tonumber(result.RotX) or 90,
+			tonumber(result.RotY) or 0,
+			tonumber(result.RotZ) or 0
+		)
+
+		AKNotify("Preset loaded: " .. presetName)
+	end,
+})
+
+AntiK:AddDivider()
+end
 		
         AutoRes:AddToggle("AutoReset", {
 			Text = "Auto Reset",
@@ -38226,7 +38973,7 @@ table.sort(DropdownValues)
 local SelectedToy1 = ToyList["Spooky Candle"] or ToyList[DropdownValues[1]]
 
 AntiK:AddDropdown("AntiKickItemDropdown", {
-    Text = "Anti Kick Item",
+    Text = "Item",
     Values = DropdownValues,
     Default = "Spray Can",
     Callback = function(Value)
@@ -38594,8 +39341,8 @@ end)
 
 		tbl12.AddRainbowToggle(AntiK, "RGBAKFill", "RGB Fill", "AKFill")
 		tbl12.AddRainbowToggle(AntiK, "RGBAKOutline", "RGB Outline", "AKOutline")
-
-		AntiK:AddSlider("FillTransAK", {
+        AKickSet:AddDivider("Color Setting")
+		AKickSet:AddSlider("FillTransAK", {
 			Text = "Fill Transparency",
 			Default = antiKickSettings.HighlightFT,
 			Min = 0,
@@ -38606,7 +39353,7 @@ end)
 			end,
 		})
 
-		AntiK:AddSlider("OutlTransAK", {
+		AKickSet:AddSlider("OutlTransAK", {
 			Text = "Outline Transparency",
 			Default = antiKickSettings.HighlightOT,
 			Min = 0,
@@ -38617,7 +39364,7 @@ end)
 			end,
 		})
 
-		AntiK:AddSlider("ShurTransAK", {
+		AKickSet:AddSlider("ShurTransAK", {
 			Text = "Shuriken Transparency",
 			Default = antiKickSettings.Transparency,
 			Min = 0,
@@ -38628,14 +39375,23 @@ end)
 			end,
 		})
 	end
+    
+    
+    local Noblob1 = tbl15.Target:AddSubTab("Grab", "users")
+
+    local Blob2 = tbl15.Target:AddSubTab("Blobman", "venetian-mask")
+
+    local G1other = tbl15.Target:AddSubTab("Others", "ellipsis")
+    
+
 
 	do
 		local selectedPlayers = tbl7.SelectedPlayers
-		tbl12.CreatePlayerDropdown(tbl15.Target:AddLeftGroupbox("Target", "circle-user-round"), "Target", selectedPlayers)
+		tbl12.CreatePlayerDropdown(Noblob1:AddLeftGroupbox("Target", "circle-user-round"), "Target", selectedPlayers)
 	end
 
 	do
-		local Apply = tbl15.Target:AddLeftGroupbox("Apply", "dock")
+		local Apply = Noblob1:AddLeftGroupbox("Apply", "dock")
 		tbl12.CreateLoopToggle(Apply, "LoopApplyMethodTSel", "LoopApplyMethodT", false, false, tbl7.SelectedPlayers)
 		tbl12.CreateLoopToggle(Apply, "LoopApplyMethodTServ", "LoopApplyMethodTServer", true, false, tbl7.SelectedPlayers)
 		tbl12.CreateApplyButton(Apply, false, false, tbl7.SelectedPlayers)
@@ -38643,7 +39399,7 @@ end)
 	end
 
 	do
-		local v20 = tbl15.Target:AddRightGroupbox("Method Settings", "apple")
+		local v20 = Noblob1:AddRightGroupbox("Method Settings", "apple")
 
 		v20:AddDropdown("MethodSettingsTargets", {
 			Values = {
@@ -38655,7 +39411,7 @@ end)
 				"Remove Gucci",
 				"Remove Invisibility",
 				"Delete Seatables",
-                "Loop Snowball",
+				"Resolve Desync",
 			},
 			Multi = true,
 			AllowNull = true,
@@ -38679,7 +39435,25 @@ end)
 			end,
 		})
         
+        local DelayValue = 200
 
+local function SetDelayMode(Value)
+    local Values = {
+        ["Low"] = 100,
+        ["Medium"] = 200,
+        ["High"] = 300,
+        ["Fast"] = 400
+    }
+
+    DelayValue = Values[Value] or 200
+end
+
+v21:AddDropdown("PhysicsDamping", {
+    Text = "Physics Damping",
+    Values = {"Low", "Medium", "High", "Fast"},
+    Default = "Medium",
+    Callback = SetDelayMode
+})
 
 		v21:AddToggle("RagdollNK", {
 			Text = "Loop Ragdoll",
@@ -38688,7 +39462,7 @@ end)
 				tbl8.RagdollInNK = ragdollInNK
 			end,
 		})
-    
+
 
 		v21:AddToggle("AntiKickRemoverNK", {
 			Text = "Remove Anti-Kick",
@@ -38792,11 +39566,11 @@ end)
 
 	do
 		local selectedPlayersBlob = tbl7.SelectedPlayersBlob
-		tbl12.CreatePlayerDropdown(tbl15.Blobman:AddLeftGroupbox("Target", "circle-user-round"), "Blobman", selectedPlayersBlob)
+		tbl12.CreatePlayerDropdown(Blob2:AddLeftGroupbox("Target", "circle-user-round"), "Blobman", selectedPlayersBlob)
 	end
 
 	do
-		local Apply = tbl15.Blobman:AddLeftGroupbox("Apply", "dock")
+		local Apply = Blob2:AddLeftGroupbox("Apply", "dock")
 		tbl12.CreateLoopToggle(Apply, "LoopApplyMethodSel", "LoopApplyMethod", false, true, tbl7.SelectedPlayersBlob)
 		tbl12.CreateLoopToggle(Apply, "LoopApplyMethodServ", "LoopApplyMethodServer", true, true, tbl7.SelectedPlayersBlob)
 		tbl12.CreateApplyButton(Apply, false, true, tbl7.SelectedPlayersBlob)
@@ -38804,7 +39578,7 @@ end)
 	end
 
 	do
-		local Settings = tbl15.Blobman:AddRightGroupbox("Settings", "settings")
+		local Settings = Blob2:AddRightGroupbox("Settings", "settings")
 
     -- Blobman Fly
 tbl8.BlobFlyEnabled = false
@@ -38913,7 +39687,7 @@ Settings:AddToggle("BlobFlyToggle", {
 	end
 
 	do
-		local v20 = tbl15.Blobman:AddRightGroupbox("Method Settings", "apple")
+		local v20 = Blob2:AddRightGroupbox("Method Settings", "apple")
 
 		v20:AddDropdown("MethodSettingsBlobs", {
 			Values = { "Kick", "Kill", "Bring", "Lock", "Follow", "Remove Gucci" },
@@ -39458,7 +40232,27 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Effects = tbl15.Toys:AddRightGroupbox("Effects", "flask-conical")
+        local SrvrC = G1other:AddRightGroupbox("Server Shutdown")
+
+        SrvrC:AddButton({
+        Text = 'Server Shutdown',
+        Tooltip = "Shuts down the server",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/LovelyHub-Cranel/LovelyHub/refs/heads/main/servercrash'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Server Shutdown Started',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+		local Effects = G1other:AddRightGroupbox("Effects", "flask-conical")
 		tbl12.CreatePlayerDropdown(Effects, "Toy Effects", tbl7.SelectedPlayersEffect)
 		Effects:AddDivider("Method")
 
@@ -39755,7 +40549,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Explosions = tbl15.Toys:AddRightGroupbox("Explosions", "bomb")
+		local Explosions = G1other:AddLeftGroupbox("Explosions", "bomb")
 		tbl12.CreatePlayerDropdown(Explosions, "Explosions", tbl7.SelectedPlayersExp)
 		Explosions:AddDivider()
 
@@ -40408,6 +41202,10 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		})
 	end
 
+    local EspP = tbl15.Visual:AddSubTab("Esp Players", "person-standing")
+
+    local EspG = tbl15.Visual:AddSubTab("Esp Graphic", "camera")
+
 	do
 		local espConfig = tbl7.ESPConfig
 
@@ -40416,7 +41214,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 			tbl12.UpdateESP(arg)
 		end
 
-		local esp = tbl15.Visual:AddLeftTabbox("ESP")
+		local esp = EspP:AddLeftTabbox("ESP")
 		local Toggles = esp:AddTab("Toggles", "toggle-right")
 
 		Toggles:AddToggle("PlrESPT", {
@@ -41016,7 +41814,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Camera = tbl15.Visual:AddRightGroupbox("Camera", "camera")
+		local Camera = EspP:AddRightGroupbox("Camera", "camera")
 
 		Camera:AddToggle("DisableBlurT", {
 			Text = "Disable Ragdoll Blur",
@@ -41120,7 +41918,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Graphics = tbl15.Visual:AddRightGroupbox("Graphics", "file-image")
+		local Graphics = EspG:AddRightGroupbox("Graphics", "file-image")
 		local n36 = 0
 		local n37 = 0.004
 		local n38 = 128
@@ -41715,7 +42513,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Character = tbl15.Visual:AddRightGroupbox("Character", "person-standing")
+		local Character = EspP:AddLeftGroupbox("Character", "person-standing")
 
 		Character:AddToggle("ForcefieldChar", {
 			Text = "Highlight Your Character",
@@ -41759,7 +42557,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local v20 = tbl15.Visual:AddLeftTabbox("Game Tweaks")
+		local v20 = EspG:AddRightTabbox("Game Tweaks")
 		local v21 = v20:AddTab(nil, "spline")
 		local tbl16 = {}
 
@@ -42121,7 +42919,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Sky = tbl15.Visual:AddLeftGroupbox("Sky", "cloudy")
+		local Sky = EspG:AddLeftGroupbox("Sky", "cloudy")
         local Lighting = game:GetService("Lighting")
 	local Visuals = {}
 
@@ -44356,109 +45154,362 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		})
 	end
 
-	tbl15.Misc:AddLeftGroupbox("Cheaters", "drama"):AddButton({
-		Text = "Find Cheaters",
-		Func = function()
-			local tbl16 = {}
+	local Cheaters = tbl15.Misc:AddLeftGroupbox("Cheaters", "drama")
 
-			for _, v20 in tbl7.PlayerList, nil, nil do
-				if v20 ~= localPlayer then
-					local v21, v22, v23 = tbl12.Char(v20)
-					local fn21, ragdollTouchedHitbox, firePlayerPart, v24, v25
+	local function collectCheaters()
+		local tbl16 = {}
 
-					if v23 then
-						local seatPart = v23.SeatPart
+		local function hasStickyPart(arg)
+			if not arg or not arg.Parent then
+				return
+			end
 
-						if seatPart then
-							local seatWeld = seatPart:FindFirstChild("SeatWeld")
+			for _, v26 in arg:GetConnectedParts() do
+				if v26.Name == "StickyPart" then
+					return true
+				end
+			end
+		end
 
-							if not seatWeld or not seatWeld.Enabled then
-								tbl16[v20] = "Has Gucci"
-							elseif v22 then
-								fn21 = function(arg)
-									if not arg or not arg.Parent then
-										return
-									end
+		for _, v20 in tbl7.PlayerList, nil, nil do
+			if v20 ~= localPlayer then
+				local v21, v22, v23 = tbl12.Char(v20)
 
-									for _, v26 in arg:GetConnectedParts() do
-										if v26.Name == "StickyPart" then
-											return true
-										end
-									end
-								end
+				if v23 then
+					local seatPart = v23.SeatPart
+					local seatWeld = seatPart and seatPart:FindFirstChild("SeatWeld")
 
-								ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-								firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-								v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-								v25 = v24 or fn21(firePlayerPart)
-
-								if v25 then
-									tbl16[v20] = "Shuriken in HRP"
-								end
-							end
-						elseif v22 then
-							fn21 = function(arg)
-								if not arg or not arg.Parent then
-									return
-								end
-
-								for _, v26 in arg:GetConnectedParts() do
-									if v26.Name == "StickyPart" then
-										return true
-									end
-								end
-							end
-
-							ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-							firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-							v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-							v25 = v24 or fn21(firePlayerPart)
-
-							if v25 then
-								tbl16[v20] = "Shuriken in HRP"
-							end
-						end
+					if seatPart and (not seatWeld or not seatWeld.Enabled) then
+						tbl16[v20] = "Has Gucci"
 					elseif v22 then
-						fn21 = function(arg)
-							if not arg or not arg.Parent then
-								return
-							end
+						local ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
+						local firePlayerPart = v22:FindFirstChild("FirePlayerPart")
 
-							for _, v26 in arg:GetConnectedParts() do
-								if v26.Name == "StickyPart" then
-									return true
-								end
-							end
-						end
-
-						ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
-						firePlayerPart = v22:FindFirstChild("FirePlayerPart")
-						v24 = fn21(v22) or fn21(ragdollTouchedHitbox)
-						v25 = v24 or fn21(firePlayerPart)
-
-						if v25 then
+						if hasStickyPart(v22) or hasStickyPart(ragdollTouchedHitbox) or hasStickyPart(firePlayerPart) then
 							tbl16[v20] = "Shuriken in HRP"
 						end
 					end
+				elseif v22 then
+					local ragdollTouchedHitbox = v22:FindFirstChild("RagdollTouchedHitbox")
+					local firePlayerPart = v22:FindFirstChild("FirePlayerPart")
+
+					if hasStickyPart(v22) or hasStickyPart(ragdollTouchedHitbox) or hasStickyPart(firePlayerPart) then
+						tbl16[v20] = "Shuriken in HRP"
+					end
 				end
 			end
+		end
 
-			if not next(tbl16) then
-				return fn18("Cheaters not found!")
-			end
-			local str5 = "Cheaters Found\n\n"
+		return tbl16
+	end
 
-			for k, v20 in pairs(tbl16) do
-				str5 ..= ("[%*]\n%*\n\n"):format(tbl12.FormatPlayer(k), v20)
-			end
+	local function reportCheaters(tbl16)
+		if not next(tbl16) then
+			return fn18("Cheaters not found!")
+		end
+		local str5 = "Cheaters Found\n\n"
 
-			fn18(str5:sub(1, -3))
+		for k, v20 in pairs(tbl16) do
+			str5 ..= ("[%*]\n%*\n\n"):format(tbl12.FormatPlayer(k), v20)
+		end
+
+		fn18(str5:sub(1, -3))
+	end
+
+	Cheaters:AddButton({
+		Text = "Find Cheaters",
+		Icon = "eye",
+		Func = function()
+			reportCheaters(collectCheaters())
 		end,
 	})
 
+	local autoFindLast = {}
+	local nextAutoFind = 0
+	local autoFindInterval = 15
+
+	Cheaters:AddToggle("AutoFindCheaters", {
+		Text = "Auto Find Cheaters",
+		Default = false,
+		Tooltip = "Automatically scans players for cheat indicators and notifies you when a new one appears",
+		Callback = function(autoFind)
+			if autoFind then
+				nextAutoFind = 0
+			end
+		end,
+	})
+
+	Cheaters:AddSlider("AutoFindInterval", {
+		Text = "Check Interval",
+		Default = 15,
+		Min = 5,
+		Max = 60,
+		Rounding = 0,
+		Compact = true,
+		Suffix = " seconds",
+		Callback = function(checkInterval)
+			autoFindInterval = checkInterval
+		end,
+	})
+
+	task.spawn(function()
+		while task.wait(1) do
+			if flag11 then
+				return
+			end
+
+			if not toggles.AutoFindCheaters or not toggles.AutoFindCheaters.Value then
+				continue
+			end
+
+			if os.clock() < nextAutoFind then
+				continue
+			end
+
+			nextAutoFind = os.clock() + math.clamp(autoFindInterval, 5, 60)
+			local currentCheaters = collectCheaters()
+
+			for player, reason in currentCheaters do
+				if autoFindLast[player] ~= reason then
+					autoFindLast[player] = reason
+					fn18(("Cheater detected: %s (%s)"):format(tbl12.FormatPlayer(player), reason))
+				end
+			end
+
+			for player in autoFindLast do
+				if not currentCheaters[player] then
+					autoFindLast[player] = nil
+				end
+			end
+		end
+	end)
+
+    local Whitl = tbl15.Lists:AddSubTab("Whitelist", "badge-check")
+	local scrpt2 = tbl15.Lists:AddSubTab("Scripts", "file-code")
+
 	do
-		local Whitelist = tbl15.Lists:AddLeftGroupbox("Whitelist", "shield-check")
-		local v20 = tbl12.CreatePlayerDropdown(Whitelist, "Whitelist", tbl7.Whitelisted)
+
+        local lblscpt = scrpt2:AddLeftGroupbox("Attention")
+        lblscpt:AddLabel({ Text = "These scripts have been provided for you to try out they aren't particularly good.", DoesWrap = true })
+        lblscpt:AddLabel({ Text = "It is recommended to open no more than 2 scripts.", DoesWrap = true })
+
+        local Oldscpt = scrpt2:AddRightGroupbox("Old Scripts")
+
+     Oldscpt:AddButton({
+        Text = 'Blizt',
+        Tooltip = "Blizt Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Lovely%20blizt'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'VHS',
+        Tooltip = "VHS Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/VHS%20LOVELY'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Verbal',
+        Tooltip = "Verbal Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/vebral'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'NoName',
+        Tooltip = "NoName Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/noname'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Ragalic',
+        Tooltip = "Ragalic Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Lovely%20ragalic'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Oldscpt:AddDivider()
+
+    Oldscpt:AddButton({
+        Text = 'Posral',
+        Tooltip = "Posral Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/posral'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+
+
+    local Newscpt = scrpt2:AddLeftGroupbox("New Scripts")
+
+    Newscpt:AddButton({
+        Text = 'Genesıs V2',
+        Tooltip = "Genesıs V2 Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Genes%C4%B1s'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Mercury',
+        Tooltip = "Mercury Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/Mercury'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Apex',
+        Tooltip = "Apex Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/apex'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+    
+    Newscpt:AddDivider()
+
+    Newscpt:AddButton({
+        Text = 'Pluton V2',
+        Tooltip = "Pluton V2 Script",
+        Func = function()
+            task.spawn(function()
+                local ok, err = pcall(function()
+                    loadstring(game:HttpGet('https://raw.githubusercontent.com/anw1Pi/Hitler/refs/heads/main/plutonV2'))()
+                end)
+
+                Library:Notify({
+                    Title = 'Moon',
+                    Description = 'Open script',
+                    Time = 3,
+                    BigIcon = "rbxassetid://92788301326379",
+                })
+            end)
+        end,
+    })
+
+    
+
+
+		local Whitelist = Whitl:AddLeftGroupbox("Whitelist", "shield-check")
+		local v20 = tbl12.CreatePlayerDropdown(Whitelist, "Whitelist", tbl7.Whitelisted, nil, nil, nil, nil, true)
 
 		v20:OnChanged(function()
 			if tbl8.SilentAim then
@@ -44474,7 +45525,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		end)
 
 		local function fn21(arg, arg2)
-			if flag11 or not tbl8.AutoWhitelistFriends or arg == localPlayer or arg.Parent ~= Players or tbl12.IsProtectedPlayer(arg) then
+			if flag11 or not tbl8.AutoWhitelistFriends or arg == localPlayer or arg.Parent ~= Players then
 				return
 			end
 			local flag12 = v20.Value[arg] == true
@@ -44574,8 +45625,8 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	toggles.AutoWhitelistFriends:SetValue(true)
 
 	do
-		local Immunity = tbl15.Lists:AddRightGroupbox("Immunity", "shield-user")
-		tbl12.CreatePlayerDropdown(Immunity, "Immunity", tbl7.ImmunePlayers)
+		local Immunity = Whitl:AddRightGroupbox("Immunity", "shield-user")
+		tbl12.CreatePlayerDropdown(Immunity, "Immunity", tbl7.ImmunePlayers, nil, nil, nil, nil, true)
 		Immunity:AddDivider("Modes")
 
 		Immunity:AddToggle("ImmunityAGToggle", {
@@ -44610,9 +45661,14 @@ BuildGroup:AddToggle("AnimeImageToggle", {
         
 
 	end
+    
+    local BackGr0 = tbl15.Settings:AddSubTab("GUI", "layout-dashboard")
+
+    local Settngs = tbl15.Settings:AddSubTab("Setting", "sliders-horizontal")
+
 
 	do
-		local Menu = tbl15.Settings:AddLeftGroupbox("Menu", "wrench")
+		local Menu = Settngs:AddLeftGroupbox("Menu", "wrench")
 		Menu:AddLabel("Menu Keybind"):AddKeyPicker("menukey", { Text = "Menu Keybind", Mode = "Toggle", Default = "RightShift", NoUI = false })
 		lib.ToggleKeybind = options.menukey
 
@@ -44712,7 +45768,7 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 	end
 
 	do
-		local Network = tbl15.Settings:AddRightGroupbox("Network", "radio-tower")
+		local Network = Settngs:AddRightGroupbox("Network", "radio-tower")
 
 		Network:AddToggle("PositionPrediction", {
 			Text = "Position Prediction",
@@ -44733,10 +45789,10 @@ BuildGroup:AddToggle("AnimeImageToggle", {
 		})
 	end
 
-	do
-		local Display = tbl15.Settings:AddLeftGroupbox("Display", "monitor")
+    do
+       local bckgrnd = BackGr0:AddRightGroupbox("Icon", "images")
 
-        Display:AddDivider("Coin Image")
+       bckgrnd:AddDivider("Coin Image")
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -44975,7 +46031,7 @@ local function RemoveEffect()
 end
 
 -- DROPDOWN
-Display:AddDropdown("AnimeBackgroundDropdown", {
+bckgrnd:AddDropdown("AnimeBackgroundDropdown", {
     Text = "Coın Background",
     Values = {
         "Anime 1",
@@ -44994,7 +46050,7 @@ Display:AddDropdown("AnimeBackgroundDropdown", {
 })
 
 -- TOGGLE
-Display:AddToggle("AnimeCoinEffect", {
+bckgrnd:AddToggle("AnimeCoinEffect", {
     Text = "Anime Coin Design",
     Default = false,
 
@@ -45008,6 +46064,13 @@ Display:AddToggle("AnimeCoinEffect", {
     end
 })
 
+
+    end
+
+	do
+		local Display = Settngs:AddLeftGroupbox("Display", "monitor")
+
+        
 		Display:AddDivider("Cursor")
 
 		Display:AddToggle("ShowCustomCursor", {
@@ -45092,7 +46155,7 @@ Display:AddToggle("AnimeCoinEffect", {
     do
         
     
-        Notifications = tbl15.Settings:AddGroupbox({
+        Notifications = BackGr0:AddGroupbox({
             Side = 'Right',
             Name = '<b>Notifiy</b>',
             Description = '<b>Notifications Setting</b>',
@@ -45624,7 +46687,7 @@ Rejoined: %rejoinedPlayer%, %listCount%]],
 	})
 
 	lib3:SetFolder("Moon/FTAP")
-	lib3:BuildConfigSection(tbl15.Settings)
+	lib3:BuildConfigSection(Settngs)
 	lib3:LoadAutoloadConfig()
 task.defer(function()
     task.wait(1)
@@ -45650,7 +46713,112 @@ end)
 
 	task.spawn(function()
 
-    local Themesbox, ImageT, RainbowT, SettingsT = lib2:ApplyToTab(tbl15.Settings)
+    local Themesbox,  ImageT, RainbowT, SettingsT = lib2:ApplyToTab(BackGr0)
+
+
+		do
+			local originalTransparency = setmetatable({}, { __mode = "k" })
+
+			local function applyBackgroundTransparency(value)
+				local mainFrame = v19 and v19.MainFrame
+				if not mainFrame then
+					return
+				end
+
+				local function apply(obj)
+					if not (obj:IsA("Frame") or obj:IsA("ScrollingFrame") or obj:IsA("TextButton")) then
+						return
+					end
+					if originalTransparency[obj] == nil then
+						originalTransparency[obj] = obj.BackgroundTransparency
+					end
+					local original = originalTransparency[obj]
+					if original >= 1 then
+						return
+					end
+					-- skip thin divider lines so they stay visible
+					if obj.Size.Y.Offset > 0 and obj.Size.Y.Offset <= 2 or obj.Size.X.Offset > 0 and obj.Size.X.Offset <= 2 then
+						return
+					end
+					obj.BackgroundTransparency = 1 - (1 - original) * (1 - value)
+				end
+
+				-- main window, sidebar, container, footer and groupbox backgrounds (toggles/sliders keep their own background)
+				apply(mainFrame)
+				for _, child in mainFrame:GetChildren() do
+					apply(child)
+					if child.Name == "FooterClip" then
+						for _, sub in child:GetDescendants() do
+							apply(sub)
+						end
+					end
+				end
+
+				for _, obj in mainFrame:GetDescendants() do
+					local reg = lib.Registry[obj]
+					if reg and reg.BackgroundColor3 == "BackgroundColor" and obj:IsA("Frame") then
+						apply(obj)
+					end
+				end
+			end
+
+			ImageT:AddSlider("BGTransparencySlider", {
+				Text = "Background Transparency",
+				Default = 60,
+				Min = 0,
+				Max = 100,
+				Rounding = 0,
+				Suffix = "%",
+				Compact = true,
+				Callback = function(value)
+					applyBackgroundTransparency(value / 100)
+				end,
+			})
+
+			applyBackgroundTransparency(0.6)
+		end
+
+		do
+			local function findBackgroundImage()
+				return v19 and v19.BackgroundImage
+			end
+
+			ImageT:AddSlider("BGImageClarity", {
+				Text = "Background Image Clarity",
+				Default = 75,
+				Min = 0,
+				Max = 100,
+				Rounding = 0,
+				Suffix = "%",
+				Compact = true,
+				Callback = function(value)
+					local image = findBackgroundImage()
+					if image then
+						image.ImageTransparency = 1 - value / 100
+					end
+				end,
+			})
+
+			ImageT:AddToggle("BGImageKeepRatio", {
+				Text = "Sharp Image (no stretch)",
+				Default = true,
+				Callback = function(state)
+					local image = findBackgroundImage()
+					if image then
+						image.ScaleType = state and Enum.ScaleType.Crop or Enum.ScaleType.Stretch
+					end
+				end,
+			})
+
+			task.defer(function()
+				local image = findBackgroundImage()
+				if image then
+					image.ImageTransparency = 1 - 75 / 100
+					image.ScaleType = Enum.ScaleType.Crop
+					image.ZIndex = 0
+				end
+			end)
+		end
 
     -- ===== Rainbow border (renk / hiz menuden degistirilebilir) =====
 		local MainFrame
