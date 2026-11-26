@@ -30205,7 +30205,7 @@ end
 						bodyPosition.Name = "FreezeBP"
 						v23.Position = position
 						v24.MaxForce = Vector3.one * math.huge
-						v25.D = 500
+						v25.D = BlobDamping
 						bodyGyro = Instance.new("BodyGyro", humanoidRootPart)
 						local v26 = bodyGyro
 						local v27 = bodyGyro
@@ -30214,7 +30214,7 @@ end
 						bodyGyro.Name = "FreezeBG"
 						v26.CFrame = cFrame2
 						v27.MaxTorque = Vector3.one * math.huge
-						v28.D = 500
+						v28.D = BlobDamping
 					end
 
 					tbl12.ResetVelocity(humanoidRootPart)
@@ -39702,6 +39702,26 @@ Settings:AddToggle("BlobFlyToggle", {
 		v20:AddDivider()
 		local v21 = v20:AddDependencyBox()
 		v21:SetupDependencies({ { options.MethodSettingsBlobs, "Kick" } })
+
+local BlobDamping = 500
+
+local function SetDampingMode(Value)
+    local Values = {
+        ["Low"] = 400,
+        ["Medium"] = 500,
+        ["High"] = 600,
+        ["Fast"] = 700
+    }
+
+   BlobDamping = Values[Value] or 500
+end
+
+v21:AddDropdown("PhysicsDamping", {
+    Text = "Physics Damping",
+    Values = {"Low", "Medium", "High", "Fast"},
+    Default = "Medium",
+    Callback = SetDampingMode
+})
 
 		v21:AddDropdown("KickSettingBlob", {
 			Values = { "Grab-Drop", "Grab-Release" },
