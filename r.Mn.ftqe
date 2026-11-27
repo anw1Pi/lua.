@@ -16,6 +16,7 @@ local Teams: Teams = cloneref(game:GetService("Teams"))
 local TweenService: TweenService = cloneref(game:GetService("TweenService"))
 
 
+
 local getgenv = getgenv or function()
     return shared
 end
@@ -46196,11 +46197,9 @@ bckgrnd:AddToggle("AnimeCoinEffect", {
 		local NotifIcons = {
 			["Default"] = "",
 			["Moon 2"] = "http://www.roblox.com/asset/?id=113559137621324",
-			["Moon 3"] = "http://www.roblox.com/asset/?id=132930350526577",
-			["Moon 4"] = "http://www.roblox.com/asset/?id=135686162979186",
-            ["Moon 5"] = "http://www.roblox.com/asset/?id=119271269135646",
+            ["Moon 3"] = "http://www.roblox.com/asset/?id=119271269135646",
 		}
-		local NotifIconNames = { "Default", "Moon 2", "Moon 3", "Moon 4", "Moon 5" }
+		local NotifIconNames = { "Default", "Moon 2", "Moon 3" }
 		local ChosenNotifIcon = ""
 
 		-- menu logosu (pencerenin sol ustundeki ikon)
@@ -46829,6 +46828,40 @@ end)
 					end
 				end,
 			})
+local HatImage = "rbxassetid://74699370087459"
+local HatOverlay
+
+local function ApplyHat()
+	local IconLabel = lib.WindowIconLabel
+	if not IconLabel then
+		return false
+	end
+
+	if not HatOverlay or not HatOverlay.Parent then
+		HatOverlay = Instance.new("ImageLabel")
+		HatOverlay.Name = "ChristmasHat"
+		HatOverlay.AnchorPoint = Vector2.new(0.5, 1)
+		HatOverlay.Position = UDim2.new(0.5, 6, 0, -6)
+		HatOverlay.Size = UDim2.new(2.2, 0, 2.2, 0)
+		HatOverlay.BackgroundTransparency = 1
+		HatOverlay.ScaleType = Enum.ScaleType.Fit
+		HatOverlay.ZIndex = IconLabel.ZIndex + 1
+		HatOverlay.Parent = IconLabel
+	end
+
+	HatOverlay.Image = HatImage
+	HatOverlay.Visible = true
+	return true
+end
+
+
+task.spawn(function()
+	local Tries = 0
+	while not ApplyHat() and Tries < 50 do
+		Tries += 1
+		task.wait(0.1)
+	end
+end)
 
 			task.defer(function()
 				local image = findBackgroundImage()
@@ -46839,6 +46872,41 @@ end)
 				end
 			end)
 		end
+
+local HatImage = "rbxassetid://127404215331297"
+local HatOverlay
+
+local function ApplyHat()
+	local IconLabel = lib.WindowIconLabel
+	if not IconLabel then
+		return false
+	end
+
+	if not HatOverlay or not HatOverlay.Parent then
+		HatOverlay = Instance.new("ImageLabel")
+		HatOverlay.Name = "ChristmasHat"
+		HatOverlay.AnchorPoint = Vector2.new(0.5, 1)
+		HatOverlay.Position = UDim2.new(0.5, 1, 0, 48)
+		HatOverlay.Size = UDim2.new(2.1, 0, 2.1, 0)
+		HatOverlay.BackgroundTransparency = 1
+		HatOverlay.ScaleType = Enum.ScaleType.Fit
+		HatOverlay.ZIndex = IconLabel.ZIndex + 1
+		HatOverlay.Parent = IconLabel
+	end
+
+	HatOverlay.Image = HatImage
+	HatOverlay.Visible = true
+	return true
+end
+
+
+task.spawn(function()
+	local Tries = 0
+	while not ApplyHat() and Tries < 50 do
+		Tries += 1
+		task.wait(0.1)
+	end
+end)
 
     -- ===== Rainbow border (renk / hiz menuden degistirilebilir) =====
 		local MainFrame
@@ -47401,4 +47469,174 @@ SOFTWARE.
 ]====]
 local loadedFunction, message = loadstring(sources.Bootstrap, "@Moon/Bootstrap")
 assert(loadedFunction, message)
-return loadedFunction(sources)
+local moonResult = loadedFunction(sources)
+
+task.spawn(function()
+    local TweenService = game:GetService("TweenService")
+    local Lighting = game:GetService("Lighting")
+    local CoreGui = game:GetService("CoreGui")
+
+    
+    local old = Lighting:FindFirstChild("MoonMenuBlur")
+    if old then old:Destroy() end
+
+    
+    pcall(function()
+        local g = getgenv and getgenv() or _G
+        if g.Snowflakes == nil then g.Snowflakes = true end
+    end)
+
+    local function getFlag(n)
+        local ok, g = pcall(function() return getgenv and getgenv() or _G end)
+        if ok and type(g) == "table" and g[n] ~= nil then
+            return g[n] and true or false
+        end
+        return true
+    end
+
+    local function resolveHui()
+        local ok, h = pcall(function()
+            if gethui then return gethui() end
+        end)
+        if ok and h then return h end
+        return CoreGui
+    end
+
+    
+    local main, obs
+    for i = 1, 300 do
+        local hui = resolveHui()
+        obs = hui:FindFirstChild("Obsidian")
+        if not obs then
+            for _, parent in ipairs({ CoreGui, (game.Players.LocalPlayer and game.Players.LocalPlayer:FindFirstChild("PlayerGui")) }) do
+                if parent then
+                    obs = parent:FindFirstChild("Obsidian")
+                    if obs then break end
+                end
+            end
+        end
+        if obs then
+            main = obs:FindFirstChild("Main")
+            if main then break end
+        end
+        task.wait(0.1)
+    end
+
+    if not main then
+        warn("[SnowGui] menu not found after wait")
+        return
+    end
+
+    local hui = resolveHui()
+
+   
+    local oldGui = hui:FindFirstChild("SnowGui")
+    if oldGui then oldGui:Destroy() end
+
+    -- Snow GUI
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SnowGui"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 9999
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function() if protectgui then protectgui(gui) end end)
+    gui.Parent = hui
+    gui.Enabled = true
+
+    local Frame = Instance.new("Frame")
+    Frame.Name = "SnowFrame"
+    Frame.BackgroundTransparency = 1
+    Frame.Size = UDim2.fromScale(1, 1)
+    Frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    Frame.Position = UDim2.fromScale(0.5, 0.5)
+    Frame.Parent = gui
+
+    -- kar ayarları
+    local SNOW_COUNT = 100
+    local SNOW_MODE = "image"         
+    local SNOW_IMAGE = "rbxassetid://136831540800180"             
+    local SNOW_SYMBOL = "❄"
+
+    for i = 1, SNOW_COUNT do
+        local s = math.random(8, 18)
+        local snow
+
+        if SNOW_MODE == "image" and SNOW_IMAGE ~= "" then
+            snow = Instance.new("ImageLabel")
+            snow.Image = SNOW_IMAGE
+            snow.BackgroundTransparency = 1
+            snow.ImageTransparency = 0.1 + math.random() * 0.4
+            snow.Size = UDim2.fromOffset(s, s)
+        elseif SNOW_MODE == "text" or SNOW_MODE == "image" then
+            snow = Instance.new("TextLabel")
+            snow.Text = SNOW_SYMBOL
+            snow.TextColor3 = Color3.fromRGB(255, 255, 255)
+            snow.TextTransparency = 0.1 + math.random() * 0.4
+            snow.TextSize = s
+            snow.BackgroundTransparency = 1
+            snow.Size = UDim2.fromOffset(s, s)
+        else
+            snow = Instance.new("Frame")
+            snow.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+            snow.BackgroundTransparency = 0.1 + math.random() * 0.4
+            local s2 = math.random(4, 10)
+            snow.Size = UDim2.fromOffset(s2, s2)
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(1, 0)
+            corner.Parent = snow
+        end
+
+        snow.BorderSizePixel = 0
+        snow.AnchorPoint = Vector2.new(0.5, 0)
+        snow.Position = UDim2.new(math.random(), 0, -0.1, 0)
+        snow.ZIndex = 10
+        snow.Parent = Frame
+
+        task.spawn(function()
+            task.wait(math.random() * 2)
+            while snow.Parent do
+                local x = math.random()
+                snow.Position = UDim2.new(x, 0, -0.1, 0)
+                local tweenInfo = TweenInfo.new(2.5 + math.random() * 3.5, Enum.EasingStyle.Linear)
+                local tween = TweenService:Create(snow, tweenInfo, {
+                    Position = UDim2.new(math.clamp(x + (math.random() - 0.5) * 0.25, 0, 1), 0, 1.1, 0)
+                })
+                tween:Play()
+                tween.Completed:Wait()
+            end
+        end)
+    end
+
+    
+    local function isMenuOpen()
+        local ok, result = pcall(function()
+            if not obs.Enabled then return false end
+            local inst = main
+            while inst and inst ~= obs do
+                if inst:IsA("GuiObject") and not inst.Visible then
+                    return false
+                end
+                inst = inst.Parent
+            end
+            return main.AbsoluteSize.X > 0 and main.AbsoluteSize.Y > 0
+        end)
+        return ok and result or false
+    end
+
+    while gui.Parent and obs.Parent do
+        local open = isMenuOpen()
+
+        gui.Enabled = (getFlag("Snowflakes") and open) and true or false
+
+        task.wait(0.1)
+    end
+
+    -- menü kapatıldı (unload) -> kar efektini tamamen sil
+    gui:Destroy()
+end)
+
+
+
+
+return moonResult
